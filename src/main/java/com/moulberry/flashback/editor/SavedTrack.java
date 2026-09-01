@@ -1,5 +1,6 @@
 package com.moulberry.flashback.editor;
 
+import com.moulberry.flashback.editor.ui.KeyframeRelativeOffsets;
 import com.moulberry.flashback.keyframe.Keyframe;
 import com.moulberry.flashback.keyframe.KeyframeType;
 import com.moulberry.flashback.state.EditorState;
@@ -16,6 +17,11 @@ import java.util.TreeMap;
 public record SavedTrack(KeyframeType<?> type, int track, boolean copiedFromDisabled,
                          TreeMap<Integer, Keyframe> keyframes) {
     public int applyToEditorState(EditorState editorState, int cursorTicks, int totalTicks) {
+        return this.applyToEditorState(editorState, cursorTicks, totalTicks, new KeyframeRelativeOffsets());
+    }
+
+    public int applyToEditorState(EditorState editorState, int cursorTicks, int totalTicks,
+                                  KeyframeRelativeOffsets offsets) {
         if (this.keyframes == null || this.keyframes.isEmpty()) {
             return 0;
         }
@@ -24,28 +30,30 @@ public record SavedTrack(KeyframeType<?> type, int track, boolean copiedFromDisa
         if (this.track >= 0 && this.track < editorState.keyframeTracks.size()) {
             KeyframeTrack keyframeTrack = editorState.keyframeTracks.get(this.track);
             if ((keyframeTrack.enabled || this.copiedFromDisabled) && keyframeTrack.keyframeType == this.type) {
-                return this.applyTo(editorState, this.type, keyframeTrack, this.track, cursorTicks, totalTicks);
+                return this.applyTo(editorState, keyframeTrack, this.track, cursorTicks, totalTicks, offsets);
             }
         }
 
         // Try to find first eligible enabled track
-        for (KeyframeTrack keyframeTrack : editorState.keyframeTracks) {
+        for (int trackIndex = 0; trackIndex < editorState.keyframeTracks.size(); trackIndex++) {
+            KeyframeTrack keyframeTrack = editorState.keyframeTracks.get(trackIndex);
             if (keyframeTrack.enabled && keyframeTrack.keyframeType == this.type) {
-                return this.applyTo(editorState, this.type, keyframeTrack, this.track, cursorTicks, totalTicks);
+                return this.applyTo(editorState, keyframeTrack, trackIndex, cursorTicks, totalTicks, offsets);
             }
         }
 
         // Create new track
-        return this.applyTo(editorState, this.type, null, this.track, cursorTicks, totalTicks);
+        return this.applyTo(editorState, null, editorState.keyframeTracks.size(), cursorTicks, totalTicks, offsets);
     }
 
-    private int applyTo(EditorState editorState, KeyframeType type, @Nullable KeyframeTrack existing, int trackIndex, int cursorTicks, int totalTicks) {
+    private int applyTo(EditorState editorState, @Nullable KeyframeTrack existing, int trackIndex,
+                        int cursorTicks, int totalTicks, KeyframeRelativeOffsets offsets) {
         List<EditorStateHistoryAction> undo = new ArrayList<>();
         List<EditorStateHistoryAction> redo = new ArrayList<>();
 
         if (existing == null) {
-            undo.add(new EditorStateHistoryAction.RemoveTrack(type, trackIndex));
-            redo.add(new EditorStateHistoryAction.AddTrack(type, trackIndex));
+            undo.add(new EditorStateHistoryAction.RemoveTrack(this.type, trackIndex));
+            redo.add(new EditorStateHistoryAction.AddTrack(this.type, trackIndex));
         }
 
         int count = 0;
@@ -56,12 +64,15 @@ public record SavedTrack(KeyframeType<?> type, int track, boolean copiedFromDisa
                     Keyframe old = existing.keyframesByTick.get(newTick);
 
                     if (old != null) {
-                        undo.add(new EditorStateHistoryAction.SetKeyframe(type, trackIndex, newTick, old.copy()));
+                        undo.add(new EditorStateHistoryAction.SetKeyframe(this.type, trackIndex, newTick, old.copy()));
                     } else {
-                        undo.add(new EditorStateHistoryAction.RemoveKeyframe(type, trackIndex, newTick));
+                        undo.add(new EditorStateHistoryAction.RemoveKeyframe(this.type, trackIndex, newTick));
                     }
                 }
-                redo.add(new EditorStateHistoryAction.SetKeyframe(type, trackIndex, newTick, entry.getValue().copy()));
+
+                Keyframe newKeyframe = entry.getValue().copy();
+                offsets.apply(newKeyframe);
+                redo.add(new EditorStateHistoryAction.SetKeyframe(this.type, trackIndex, newTick, newKeyframe));
 
                 count += 1;
             }

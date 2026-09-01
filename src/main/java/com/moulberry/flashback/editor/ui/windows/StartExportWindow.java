@@ -2,6 +2,7 @@ package com.moulberry.flashback.editor.ui.windows;
 
 import com.mojang.blaze3d.platform.Window;
 import com.moulberry.flashback.Flashback;
+import com.moulberry.flashback.LoaderCompat;
 import com.moulberry.flashback.Utils;
 import com.moulberry.flashback.combo_options.AspectRatio;
 import com.moulberry.flashback.combo_options.AudioCodec;
@@ -19,7 +20,6 @@ import com.moulberry.flashback.playback.ReplayServer;
 import imgui.ImGui;
 import imgui.flag.ImGuiWindowFlags;
 import imgui.type.ImString;
-import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.FileUtil;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
@@ -30,6 +30,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 
@@ -81,7 +82,7 @@ public class StartExportWindow {
         if (open) {
             installedIncompatibleModsString = null;
             for (String potentialIncompatibleMod : potentialIncompatibleMods) {
-                if (FabricLoader.getInstance().isModLoaded(potentialIncompatibleMod)) {
+                if (LoaderCompat.isModLoaded(potentialIncompatibleMod)) {
                     if (installedIncompatibleModsString == null) {
                         installedIncompatibleModsString = potentialIncompatibleMod;
                     } else {
@@ -395,8 +396,19 @@ public class StartExportWindow {
                     useAudioCodec = null;
                 }
 
-                Path path = Path.of(pathStr);
-                defaultExportPath = path.getParent();
+                Path path = Path.of(pathStr).toAbsolutePath().normalize();
+                if (container != VideoContainer.PNG_SEQUENCE && path.getFileName() != null) {
+                    String extension = "." + container.extension().toLowerCase(Locale.ROOT);
+                    String filename = path.getFileName().toString();
+                    if (!filename.toLowerCase(Locale.ROOT).endsWith(extension)) {
+                        path = path.resolveSibling(filename + extension);
+                    }
+                }
+
+                Path parent = path.getParent();
+                if (parent != null) {
+                    defaultExportPath = parent;
+                }
                 return new ExportSettings(name, editorState.copy(),
                     player.position(), player.getYRot(), player.getXRot(),
                     resolution[0], resolution[1], start, end,
@@ -420,7 +432,7 @@ public class StartExportWindow {
 
     public static @NotNull String getDefaultFilename(@Nullable String name, String extension) {
         if (defaultExportPath == null || !Files.exists(defaultExportPath)) {
-            defaultExportPath = FabricLoader.getInstance().getGameDir();
+            defaultExportPath = LoaderCompat.getGameDir();
         }
 
         String defaultName = null;

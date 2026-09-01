@@ -156,8 +156,11 @@ public class AsyncFFmpegVideoWriter implements AutoCloseable, VideoWriter {
                         }
                     }
 
-                    int size = src.height * src.stride * Frame.pixelSize(src.imageDepth);
-                    ByteBuffer buffer = MemoryUtil.memByteBuffer(src.pointer, size);
+                    // Planar formats such as YUV420P contain more than just the
+                    // first (luma) plane. Use the allocation's exact size rather
+                    // than deriving a packed-image size from the first-plane
+                    // stride.
+                    ByteBuffer buffer = MemoryUtil.memByteBuffer(src.pointer, src.size);
 
                     recorder.recordImage(src.width, src.height, src.imageDepth, src.channels,
                             src.stride, src.pixelFormat, buffer);
@@ -194,7 +197,6 @@ public class AsyncFFmpegVideoWriter implements AutoCloseable, VideoWriter {
 
     private Thread createRescaleThread(int dstWidth, int dstHeight, int dstPixelFormat) {
         int dstSize = av_image_get_buffer_size(dstPixelFormat, dstWidth, dstHeight, 1);
-        int dstDepth = dstSize * 8 / dstWidth / dstHeight;
         int dstChannels;
 
         try (AVPixFmtDescriptor descriptor = av_pix_fmt_desc_get(dstPixelFormat)) {
@@ -278,8 +280,16 @@ public class AsyncFFmpegVideoWriter implements AutoCloseable, VideoWriter {
                     swscale.sws_scale(img_convert_ctx, tmp_picture_ptr, tmp_picture.linesize(),
                             0, src.height, picture_ptr, picture.linesize());
 
-                    this.encodeQueue.put(new ImageFrame(tempPointerAddress, dstSize, dstWidth, dstHeight, dstChannels, dstDepth,
-                            dstWidth, dstPixelFormat, src.audioBuffer));
+                    // FFmpegFrameRecorder overwrites linesize(0) from
+                    // imageStride * imageDepth / 8. The Forge class loader does
+                    // not transform FFmpegFrameRecorder with our external-class
+                    // mixin, so passing the average bits-per-pixel here corrupts
+                    // planar formats (YUV420P became a 1.5 * width stride).
+                    // Preserve the linesize calculated by av_image_fill_arrays
+                    // by representing it as an 8-bit row stride.
+                    int recorderStride = picture.linesize(0);
+                    this.encodeQueue.put(new ImageFrame(tempPointerAddress, dstSize, dstWidth, dstHeight, dstChannels,
+                            Frame.DEPTH_UBYTE, recorderStride, dstPixelFormat, src.audioBuffer));
                 } catch (Throwable t) {
                     try {
                         av_frame_free(picture);

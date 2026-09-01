@@ -3,9 +3,11 @@ package com.moulberry.flashback.configuration;
 import com.mojang.serialization.Codec;
 import com.moulberry.flashback.Flashback;
 import com.moulberry.flashback.FlashbackGson;
+import com.moulberry.flashback.LoaderCompat;
 import com.moulberry.flashback.SneakyThrow;
+import com.moulberry.flashback.combo_options.RecordingControlsLocation;
 import com.moulberry.flashback.keyframe.interpolation.InterpolationType;
-import net.fabricmc.loader.api.FabricLoader;
+import com.moulberry.flashback.screen.select_replay.ReplaySorting;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.OptionInstance;
 import net.minecraft.network.chat.Component;
@@ -42,9 +44,12 @@ public class FlashbackConfig {
     @OptionDescription("flashback.option.quicksave.description")
     public boolean quicksave = false;
 
-    @OptionCaption("flashback.option.hide_pause_menu_controls")
-    @OptionDescription("flashback.option.hide_pause_menu_controls.description")
+    /** Kept for migration from 0.11.0 configuration files. */
     public boolean hidePauseMenuControls = false;
+
+    @OptionCaption("flashback.option.recording_controls.location")
+    @OptionDescription("flashback.option.recording_controls.location.description")
+    public RecordingControlsLocation recordingControlsLocation = RecordingControlsLocation.RIGHT;
 
     @OptionCaption("flashback.option.mark_dimension_changes")
     @OptionDescription("flashback.option.mark_dimension_changes.description")
@@ -78,6 +83,12 @@ public class FlashbackConfig {
     public List<String> recentReplays = new ArrayList<>();
     public String defaultExportFilename = "%date%T%time%";
     public InterpolationType defaultInterpolationType = InterpolationType.SMOOTH;
+    public ReplaySorting replaySorting = ReplaySorting.CREATED_DATE;
+    public boolean sortDescending = true;
+    public boolean signedRenderFilter = false;
+    public boolean showTipOfTheDay = true;
+    public long nextTipOfTheDay = 0;
+    public int viewedTipsOfTheDay = 0;
 
     @SuppressWarnings("unchecked")
     public OptionInstance<?>[] createOptionInstances() {
@@ -96,7 +107,7 @@ public class FlashbackConfig {
                 }
 
                 OptionIfModLoaded ifModLoaded = field.getDeclaredAnnotation(OptionIfModLoaded.class);
-                if (ifModLoaded != null && !FabricLoader.getInstance().isModLoaded(ifModLoaded.value())) {
+                if (ifModLoaded != null && !LoaderCompat.isModLoaded(ifModLoaded.value())) {
                     continue;
                 }
 
@@ -134,6 +145,17 @@ public class FlashbackConfig {
                             throw SneakyThrow.sneakyThrow(e);
                         }
                     }));
+                } else if (field.getType() == RecordingControlsLocation.class) {
+                    options.add(new OptionInstance<>(caption.value(), tooltipSupplier,
+                        OptionInstance.forOptionEnum(),
+                        new OptionInstance.Enum<>(List.of(RecordingControlsLocation.values()), RecordingControlsLocation.CODEC),
+                        (RecordingControlsLocation) field.get(this), value -> {
+                            try {
+                                field.set(this, value);
+                            } catch (Exception e) {
+                                throw SneakyThrow.sneakyThrow(e);
+                            }
+                        }));
                 }
             } catch (Exception e) {
                 Flashback.LOGGER.error("Error while trying to convert config field to OptionInstance", e);
@@ -192,7 +214,7 @@ public class FlashbackConfig {
 
         if (Files.exists(primary)) {
             try {
-                return load(primary);
+                return migrate(load(primary));
             } catch (Exception e) {
                 Flashback.LOGGER.error("Failed to load config from {}", primary, e);
             }
@@ -200,7 +222,7 @@ public class FlashbackConfig {
 
         if (Files.exists(backup)) {
             try {
-                return load(backup);
+                return migrate(load(backup));
             } catch (Exception e) {
                 Flashback.LOGGER.error("Failed to load config from {}", backup, e);
             }
@@ -209,8 +231,16 @@ public class FlashbackConfig {
         return new FlashbackConfig();
     }
 
+    private static FlashbackConfig migrate(FlashbackConfig config) {
+        if (config.hidePauseMenuControls) {
+            config.recordingControlsLocation = RecordingControlsLocation.HIDDEN;
+            config.hidePauseMenuControls = false;
+        }
+        return config;
+    }
+
     public void saveToDefaultFolder() {
-        Path configFolder = FabricLoader.getInstance().getConfigDir().resolve("flashback");
+        Path configFolder = LoaderCompat.getConfigDir().resolve("flashback");
         this.saveToFolder(configFolder);
     }
 

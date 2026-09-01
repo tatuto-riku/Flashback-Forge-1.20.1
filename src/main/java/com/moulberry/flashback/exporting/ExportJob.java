@@ -10,6 +10,8 @@ import com.moulberry.flashback.Flashback;
 import com.moulberry.flashback.Utils;
 import com.moulberry.flashback.combo_options.VideoContainer;
 import com.moulberry.flashback.editor.ui.ReplayUI;
+import com.moulberry.flashback.editor.ui.windows.ExportDoneWindow;
+import com.moulberry.flashback.exporting.taskbar.TaskbarManager;
 import com.moulberry.flashback.ext.MinecraftExt;
 import com.moulberry.flashback.keyframe.KeyframeType;
 import com.moulberry.flashback.keyframe.handler.KeyframeHandler;
@@ -81,6 +83,9 @@ public class ExportJob {
 
     private double audioSamples = 0.0;
 
+    public volatile int progressCount;
+    public volatile int progressOutOf;
+
     private final AtomicBoolean finishedServerTick = new AtomicBoolean(false);
 
     public static final int SRC_PIXEL_FORMAT = avutil.AV_PIX_FMT_RGBA;
@@ -128,6 +133,7 @@ public class ExportJob {
             throw new IllegalStateException("run() called twice");
         }
         this.running = true;
+        TaskbarManager.launch();
         Minecraft.getInstance().mouseHandler.releaseMouse();
         Minecraft.getInstance().getSoundManager().stop();
 
@@ -136,6 +142,7 @@ public class ExportJob {
         String tempFileName = "replay_export_temp/" + uuid + "." + this.settings.container().extension();
         Path exportTempFile = Path.of(tempFileName);
         Path exportTempFolder = exportTempFile.getParent();
+        Path output = this.settings.output().toAbsolutePath().normalize();
 
         TextureTarget infoRenderTarget = null;
 
@@ -143,6 +150,10 @@ public class ExportJob {
 
         try {
             Files.createDirectories(exportTempFolder);
+            Path outputParent = output.getParent();
+            if (outputParent != null) {
+                Files.createDirectories(outputParent);
+            }
 
             RenderTarget mainTarget = Minecraft.getInstance().mainRenderTarget;
             infoRenderTarget = new TextureTarget(mainTarget.width, mainTarget.height, false, Minecraft.ON_OSX);
@@ -153,9 +164,26 @@ public class ExportJob {
             }
 
             if (this.settings.container() != VideoContainer.PNG_SEQUENCE) {
-                Files.move(exportTempFile, this.settings.output(), StandardCopyOption.REPLACE_EXISTING);
+                Files.move(exportTempFile, output, StandardCopyOption.REPLACE_EXISTING);
+                if (!Files.isRegularFile(output)) {
+                    throw new IOException("Export finished, but the output file was not created: " + output);
+                }
+
+                long fileSize = Files.size(output);
+                if (fileSize <= 0) {
+                    throw new IOException("Export finished, but the output file is empty: " + output);
+                }
+
+                double duration = (this.settings.endTick() - this.settings.startTick()) / 20.0;
+                ExportDoneWindow.addFinishedExportEntry(
+                    new ExportDoneWindow.FinishedExportEntry(this.settings, duration, fileSize));
+            } else {
+                double duration = (this.settings.endTick() - this.settings.startTick()) / 20.0;
+                ExportDoneWindow.addFinishedExportEntry(
+                    new ExportDoneWindow.FinishedExportEntry(this.settings, duration, 0));
             }
         } catch (IOException e) {
+            Flashback.LOGGER.error("Failed to save replay export to {}", output, e);
             throw new RuntimeException(e);
         } finally {
             this.running = false;
@@ -224,6 +252,8 @@ public class ExportJob {
         Minecraft.getInstance().resizeDisplay();
 
         DoubleList ticks = calculateTicks(this.settings.editorState(), this.settings.startTick(), this.settings.endTick(), this.settings.framerate());
+        this.progressCount = 0;
+        this.progressOutOf = ticks.size();
 
         int clientTickCount = 0;
 
@@ -232,6 +262,7 @@ public class ExportJob {
         double lastTickDouble = 0;
 
         for (int tickIndex = 0; tickIndex < ticks.size(); tickIndex++) {
+            this.progressCount = tickIndex;
             this.currentTickDouble = ticks.getDouble(tickIndex);
             float deltaTicksFloat = (float)(currentTickDouble - lastTickDouble);
             lastTickDouble = currentTickDouble;
@@ -349,6 +380,7 @@ public class ExportJob {
 
         submitDownloadedFrames(videoWriter, downloader, true);
         videoWriter.finish();
+        this.progressCount = this.progressOutOf;
     }
 
     private void updateRandoms(Random random, Random mathRandom) {

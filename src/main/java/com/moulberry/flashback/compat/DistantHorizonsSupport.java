@@ -10,8 +10,6 @@ import com.seibel.distanthorizons.api.methods.events.abstractEvents.DhApiLevelLo
 import com.seibel.distanthorizons.api.methods.events.abstractEvents.DhApiWorldLoadEvent;
 import com.seibel.distanthorizons.api.methods.events.abstractEvents.DhApiWorldUnloadEvent;
 import com.seibel.distanthorizons.api.methods.events.sharedParameterObjects.DhApiEventParam;
-import com.seibel.distanthorizons.core.api.internal.SharedApi;
-import com.seibel.distanthorizons.core.level.IDhLevel;
 
 import java.io.File;
 import java.util.HashMap;
@@ -19,7 +17,7 @@ import java.util.Map;
 
 public class DistantHorizonsSupport {
 
-    private static boolean boundReplaySaveStructures = false;
+    private static boolean boundReplaySaveStructure = false;
 
     private static class ReplayDhSaveStructure implements IDhApiSaveStructure {
         public final Map<String, File> pathOverrides = new HashMap<>();
@@ -43,10 +41,14 @@ public class DistantHorizonsSupport {
 
                     ReplayServer replayServer = Flashback.getReplayServer();
                     REPLAY_SAVE_STRUCTURE.pathOverrides.clear();
-                    REPLAY_SAVE_STRUCTURE.pathOverrides.putAll(replayServer.getMetadata().distantHorizonPaths);
+                    for (Map.Entry<String, File> entry : replayServer.getMetadata().distantHorizonPaths.entrySet()) {
+                        if (entry.getValue().exists()) {
+                            REPLAY_SAVE_STRUCTURE.pathOverrides.put(entry.getKey(), entry.getValue());
+                        }
+                    }
 
                     DhApi.overrides.bind(IDhApiSaveStructure.class, REPLAY_SAVE_STRUCTURE);
-                    boundReplaySaveStructures = true;
+                    boundReplaySaveStructure = true;
                 }
             }
         });
@@ -54,10 +56,10 @@ public class DistantHorizonsSupport {
         DhApiEventRegister.on(DhApiWorldUnloadEvent.class, new DhApiWorldUnloadEvent() {
             @Override
             public void onWorldUnload(DhApiEventParam<DhApiWorldUnloadEvent.EventParam> param) {
-                if (boundReplaySaveStructures) {
+                if (boundReplaySaveStructure) {
                     Flashback.LOGGER.info("Unbinding IDhApiSaveStructure from REPLAY_SAVE_STRUCTURE");
                     DhApi.overrides.unbind(IDhApiSaveStructure.class, REPLAY_SAVE_STRUCTURE);
-                    boundReplaySaveStructures = false;
+                    boundReplaySaveStructure = false;
                 }
             }
         });
@@ -75,10 +77,12 @@ public class DistantHorizonsSupport {
     public static Map<String, File> getDimensionPaths() {
         Map<String, File> paths = new HashMap<>();
 
-        for (IDhLevel level : SharedApi.getIDhClientWorld().getAllLoadedLevels()) {
-            File file = level.getSaveStructure().getSaveFolder(level.getLevelWrapper());
-            String dimensionName = level.getLevelWrapper().getDimensionName();
-            paths.put(dimensionName, file);
+        if (DhApi.Delayed.worldProxy == null || !DhApi.Delayed.worldProxy.worldLoaded()) {
+            return paths;
+        }
+
+        for (IDhApiLevelWrapper levelWrapper : DhApi.Delayed.worldProxy.getAllLoadedLevelWrappers()) {
+            paths.put(levelWrapper.getDimensionName(), levelWrapper.getDhSaveFolder());
         }
 
         return paths;

@@ -50,6 +50,26 @@ public class CameraKeyframe extends Keyframe {
         this.interpolationType(interpolationType);
     }
 
+    public Vector3d position() {
+        return this.position;
+    }
+
+    public float yaw() {
+        return this.yaw;
+    }
+
+    public void yaw(float yaw) {
+        this.yaw = yaw;
+    }
+
+    public float pitch() {
+        return this.pitch;
+    }
+
+    public void pitch(float pitch) {
+        this.pitch = pitch;
+    }
+
     public Vector3d getNormal() {
         double yawRad = Math.toRadians(-this.yaw);
         double cosYaw = Math.cos((float)yawRad);

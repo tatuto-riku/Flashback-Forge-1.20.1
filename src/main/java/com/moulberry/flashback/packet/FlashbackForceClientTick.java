@@ -1,13 +1,9 @@
 package com.moulberry.flashback.packet;
 
-import com.moulberry.flashback.Flashback;
-import net.fabricmc.fabric.api.networking.v1.FabricPacket;
-import net.fabricmc.fabric.api.networking.v1.PacketType;
 import net.minecraft.network.FriendlyByteBuf;
 
-public class FlashbackForceClientTick implements FabricPacket {
+public class FlashbackForceClientTick implements FlashbackPacket {
     public static final FlashbackForceClientTick INSTANCE = new FlashbackForceClientTick();
-    public static final PacketType<FlashbackForceClientTick> TYPE = PacketType.create(Flashback.createResourceLocation("force_client_tick"), buf -> INSTANCE);
 
     private FlashbackForceClientTick() {
     }
@@ -16,8 +12,7 @@ public class FlashbackForceClientTick implements FabricPacket {
     public void write(FriendlyByteBuf friendlyByteBuf) {
     }
 
-    @Override
-    public PacketType<?> getType() {
-        return TYPE;
+    public static FlashbackForceClientTick decode(FriendlyByteBuf ignored) {
+        return INSTANCE;
     }
 }

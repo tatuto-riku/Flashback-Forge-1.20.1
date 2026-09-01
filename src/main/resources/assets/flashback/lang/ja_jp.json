@@ -1,0 +1,43 @@
+{
+  "flashback.flashback_options": "Flashback設定",
+  "flashback.option.recording_controls.location": "ポーズメニューの録画ボタン位置",
+  "flashback.option.recording_controls.location.description": "Minecraftのポーズメニューに表示するFlashbackボタンの位置です",
+  "flashback.recording_controls.start": "録画を開始",
+  "flashback.recording_controls.pause": "録画を一時停止",
+  "flashback.recording_controls.unpause": "録画を再開",
+  "flashback.recording_controls.cancel": "録画を破棄",
+  "flashback.recording_controls.finish": "録画を終了",
+  "flashback.confirm_cancel_recording": "録画の破棄を確認",
+  "flashback.confirm_cancel_recording_description": "録画を破棄しますか？破棄した録画は復元できません",
+  "flashback.recording_controls_location.right": "右",
+  "flashback.recording_controls_location.below": "下",
+  "flashback.recording_controls_location.left": "左",
+  "flashback.recording_controls_location.hidden": "非表示",
+
+  "flashback.sort": "並び替え",
+  "flashback.sort_direction": "並び替え順",
+  "flashback.replay_sorting.created_date": "作成日時",
+  "flashback.replay_sorting.replay_name": "録画名",
+  "flashback.replay_sorting.world_name": "ワールド名",
+  "flashback.replay_sorting.duration": "長さ",
+  "flashback.replay_sorting.filesize": "ファイルサイズ",
+
+  "flashback.registry.mismatch1": "現在のレジストリデータと録画時点のレジストリデータが一致しません",
+  "flashback.registry.mismatch2": "Modが追加・削除された場合、この録画は正しく再生できない可能性があります！",
+  "flashback.registry.mismatch3": "それでもこの録画を読み込む場合は「%s」を、そうでなければ戻るを押してください",
+  "flashback.screen_registry_mismatch": "警告: レジストリの不一致",
+
+  "flashback.incompatible_replay_version": "録画を開けません\nこの録画は %s で作成されており、%s とは互換性がありません",
+  "flashback.incompatible_replay_version_protocol": "録画を開けません\nこの録画はプロトコルバージョン %s で作成されており、%s とは互換性がありません",
+  "flashback.maybe_incompatible_replay_version": "重要な警告\nこの録画は %s で作成されており、%s では正しく読み込めない可能性があります",
+  "flashback.maybe_incompatible_replay_version_data": "重要な警告\nこの録画はデータバージョン %s で作成されており、%s では正しく読み込めない可能性があります",
+  "flashback.maybe_incompatible_registry_data": "重要な警告\n現在のレジストリデータと録画時点のレジストリデータが一致しません\nModが追加・削除された場合、この録画は正しく再生できない可能性があります",
+
+  "flashback.pasted_n_keyframes_from_clipboard": "%d 個のキーフレームをクリップボードから貼り付けました",
+  "flashback.copied_n_keyframes_to_clipboard": "%d 個のキーフレームをクリップボードにコピーしました",
+  "flashback.copy_relative": "相対コピー...",
+  "flashback.copy_relative_to_position": "位置に対して相対コピー",
+  "flashback.copy_relative_to_yaw": "ヨー角に対して相対コピー",
+  "flashback.copy_relative_to_pitch": "ピッチ角に対して相対コピー",
+  "flashback.do_copy_relative": "相対コピー"
+}

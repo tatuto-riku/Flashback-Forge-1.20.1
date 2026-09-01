@@ -1,6 +1,7 @@
 package com.moulberry.flashback.keyframe.handler;
 
 import com.moulberry.flashback.keyframe.KeyframeType;
+import com.moulberry.flashback.keyframe.types.FreezeKeyframeType;
 import com.moulberry.flashback.keyframe.types.SpeedKeyframeType;
 import com.moulberry.flashback.keyframe.types.TimelapseKeyframeType;
 import com.moulberry.flashback.playback.ReplayServer;
@@ -23,7 +24,7 @@ public class ReplayServerKeyframeHandler implements KeyframeHandler {
 
     @Override
     public Set<KeyframeType<?>> supportedKeyframes() {
-        return Set.of(SpeedKeyframeType.INSTANCE, TimelapseKeyframeType.INSTANCE);
+        return Set.of(SpeedKeyframeType.INSTANCE, TimelapseKeyframeType.INSTANCE, FreezeKeyframeType.INSTANCE);
     }
 
     @Override
@@ -44,5 +45,10 @@ public class ReplayServerKeyframeHandler implements KeyframeHandler {
     @Override
     public void applyCameraShake(float frequencyX, float amplitudeX, float frequencyY, float amplitudeY) {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void applyFreeze(boolean frozen, int frozenDelay) {
+        this.replayServer.setFrozen(frozen, frozenDelay);
     }
 }

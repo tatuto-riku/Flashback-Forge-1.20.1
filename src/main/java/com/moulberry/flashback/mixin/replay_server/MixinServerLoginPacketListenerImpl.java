@@ -41,7 +41,12 @@ public abstract class MixinServerLoginPacketListenerImpl {
             GameProfile gameProfile = new GameProfile(replayViewerUUID, ReplayServer.REPLAY_VIEWER_NAME);
             gameProfile.getProperties().put("IsReplayViewer", new Property("IsReplayViewer", "True"));
             this.gameProfile = gameProfile;
-            this.state = ServerLoginPacketListenerImpl.State.READY_TO_ACCEPT;
+            // Forge's patched tick() drives ServerboundHelloPacket handling through its own mod-list/channel
+            // negotiation (NetworkHooks.tickNegotiation) before advancing NEGOTIATING -> READY_TO_ACCEPT. Jumping
+            // straight to READY_TO_ACCEPT here skips that negotiation, leaving the client's FML handshake state
+            // out of sync with the server's — it then gets disconnected with a PLAY-protocol packet while still
+            // in the LOGIN protocol phase, which crashes with a ClassCastException on the client.
+            this.state = ServerLoginPacketListenerImpl.State.NEGOTIATING;
             ci.cancel();
         }
     }

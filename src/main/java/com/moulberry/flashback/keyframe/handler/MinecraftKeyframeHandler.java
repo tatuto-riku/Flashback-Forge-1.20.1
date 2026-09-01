@@ -7,6 +7,7 @@ import com.moulberry.flashback.keyframe.types.CameraOrbitKeyframeType;
 import com.moulberry.flashback.keyframe.types.CameraShakeKeyframeType;
 import com.moulberry.flashback.keyframe.types.FOVKeyframeType;
 import com.moulberry.flashback.keyframe.types.TimeOfDayKeyframeType;
+import com.moulberry.flashback.keyframe.types.TrackEntityKeyframeType;
 import com.moulberry.flashback.state.EditorState;
 import com.moulberry.flashback.state.EditorStateManager;
 import net.minecraft.client.Minecraft;
@@ -30,7 +31,7 @@ public class MinecraftKeyframeHandler implements KeyframeHandler {
     @Override
     public Set<KeyframeType<?>> supportedKeyframes() {
         return Set.of(CameraKeyframeType.INSTANCE, CameraOrbitKeyframeType.INSTANCE, FOVKeyframeType.INSTANCE,
-            TimeOfDayKeyframeType.INSTANCE, CameraShakeKeyframeType.INSTANCE);
+            TimeOfDayKeyframeType.INSTANCE, CameraShakeKeyframeType.INSTANCE, TrackEntityKeyframeType.INSTANCE);
     }
 
     @Override

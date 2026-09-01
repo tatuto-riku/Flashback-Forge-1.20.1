@@ -1,11 +1,14 @@
 package com.moulberry.flashback.editor.ui.windows;
 
 import com.google.gson.reflect.TypeToken;
+import net.minecraft.commands.arguments.EntityAnchorArgument;
 import com.moulberry.flashback.Flashback;
 import com.moulberry.flashback.FlashbackGson;
 import com.moulberry.flashback.Utils;
+import com.moulberry.flashback.editor.CopiedKeyframes;
 import com.moulberry.flashback.editor.SavedTrack;
 import com.moulberry.flashback.editor.SelectedKeyframes;
+import com.moulberry.flashback.editor.ui.KeyframeRelativeOffsets;
 import com.moulberry.flashback.editor.ui.ReplayUI;
 import com.moulberry.flashback.keyframe.KeyframeType;
 import com.moulberry.flashback.keyframe.KeyframeRegistry;
@@ -20,6 +23,7 @@ import com.moulberry.flashback.state.EditorStateManager;
 import com.moulberry.flashback.state.EditorState;
 import com.moulberry.flashback.keyframe.Keyframe;
 import com.moulberry.flashback.keyframe.impl.CameraKeyframe;
+import com.moulberry.flashback.keyframe.impl.CameraOrbitKeyframe;
 import com.moulberry.flashback.keyframe.interpolation.InterpolationType;
 import com.moulberry.flashback.playback.ReplayServer;
 import com.moulberry.flashback.editor.ui.ImGuiHelper;
@@ -35,9 +39,13 @@ import imgui.flag.ImGuiStyleVar;
 import imgui.flag.ImGuiWindowFlags;
 import it.unimi.dsi.fastutil.ints.*;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.resources.language.I18n;
+import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Vector2f;
+import org.joml.Vector3d;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.*;
@@ -109,6 +117,10 @@ public class TimelineWindow {
 
     private static int createKeyframeAtTick = 0;
     private static int openCreateKeyframeAtTickTrack = -1;
+
+    private static boolean copyRelativeToPosition;
+    private static boolean copyRelativeToYaw;
+    private static boolean copyRelativeToPitch;
 
 
     private static final float[] replayTickSpeeds = new float[]{1.0f, 2.0f, 4.0f, 10.0f, 20.0f, 40.0f, 100.0f, 200.0f, 400.0f};
@@ -275,6 +287,8 @@ public class TimelineWindow {
             renderSeparators(minorsPerMajor, x, middleX, minorSeparatorWidth, errorOffset, width, drawList, y, timestampHeight, middleY, minTicks, ticksPerMinor, showSubSeconds, majorSeparatorHeight, minorSeparatorHeight);
 
             // render markers
+            ReplayMarker hoveredMarker = null;
+            int hoveredMarkerTick = currentReplayTick;
             {
                 for (int tick = minTicks-10; tick <= minTicks + availableTicks + 10; tick++) {
                     Map.Entry<Integer, ReplayMarker> markerEntry = metadata.replayMarkers.ceilingEntry(tick);
@@ -290,8 +304,13 @@ public class TimelineWindow {
                     colour = ((colour >> 16) & 0xFF) | (colour & 0xFF00) | ((colour << 16) & 0xFF0000) | 0xFF000000; // change endianness
                     drawList.addCircleFilled(markerX, y+middleY, 5, colour);
 
-                    if (!ImGui.isAnyMouseDown() && marker.description() != null && Math.abs(markerX - mouseX) <= 5 && Math.abs(y+middleY - mouseY) <= 5) {
-                        ImGuiHelper.drawTooltip(marker.description());
+                    if (hoveredMarker == null && Math.abs(markerX - mouseX) <= 5
+                        && Math.abs(y + middleY - mouseY) <= 5) {
+                        if (!ImGui.isAnyMouseDown() && marker.description() != null) {
+                            ImGuiHelper.drawTooltip(marker.description());
+                        }
+                        hoveredMarker = marker;
+                        hoveredMarkerTick = markerTick;
                     }
 
                     tick = markerTick + 1;
@@ -414,7 +433,7 @@ public class TimelineWindow {
             }
 
             if (ImGui.beginPopup("##KeyframePopup")) {
-                renderKeyframeOptionsPopup(editorState);
+                renderKeyframeOptionsPopup(editorState, totalTicks);
                 ImGui.endPopup();
             } else {
                 editingKeyframeTrack = -1;
@@ -447,7 +466,24 @@ public class TimelineWindow {
 
                 boolean leftClicked = ImGui.isMouseClicked(ImGuiMouseButton.Left);
                 boolean rightClicked = ImGui.isMouseClicked(ImGuiMouseButton.Right);
-                if (leftClicked || rightClicked) {
+                if (leftClicked && hoveredMarker != null) {
+                    replayServer.goToReplayTick(hoveredMarkerTick);
+                    ReplayMarker.MarkerPosition markerPosition = hoveredMarker.position();
+                    LocalPlayer player = Minecraft.getInstance().player;
+                    if (markerPosition != null && player != null && Minecraft.getInstance().level != null
+                        && Minecraft.getInstance().level.dimension().toString().equals(markerPosition.dimension())) {
+                        Vec3 target = new Vec3(markerPosition.position().x, markerPosition.position().y,
+                            markerPosition.position().z);
+                        Vec3 delta = player.getEyePosition().subtract(target);
+                        if (delta.length() > 3.0) {
+                            Vec3 repositioned = delta.normalize().scale(3.0).add(target)
+                                .subtract(0.0, player.getEyeHeight(), 0.0);
+                            player.moveTo(repositioned.x, repositioned.y, repositioned.z);
+                        }
+                        player.lookAt(EntityAnchorArgument.Anchor.EYES, target);
+                        player.setDeltaMovement(Vec3.ZERO);
+                    }
+                } else if (leftClicked || rightClicked) {
                     handleClick(editorState, replayServer, totalTicks);
                     if (leftClicked) {
                         draggingMouseButton = ImGuiMouseButton.Left;
@@ -515,6 +551,7 @@ public class TimelineWindow {
 
                         if (desiredTick > currentReplayTick) {
                             replayServer.goToReplayTick(desiredTick);
+                            replayServer.forceApplyKeyframes.set(true);
                         }
 
                         replayServer.replayPaused = true;
@@ -655,54 +692,100 @@ public class TimelineWindow {
         }
 
         if (pressedCopy && !selectedKeyframesList.isEmpty()) {
-            List<SavedTrack> tracks = new ArrayList<>();
-
-            int minTick = totalTicks;
-            int keyframeCount = 0;
-
-            for (SelectedKeyframes selectedKeyframes : selectedKeyframesList) {
-                for (int keyframeTick : selectedKeyframes.keyframeTicks()) {
-                    minTick = Math.min(minTick, keyframeTick);
-                    keyframeCount += 1;
-                }
-            }
-
-            for (SelectedKeyframes selectedKeyframes : selectedKeyframesList) {
-                KeyframeTrack keyframeTrack = editorState.keyframeTracks.get(selectedKeyframes.trackIndex());
-
-                TreeMap<Integer, Keyframe> keyframes = new TreeMap<>();
-                for (int tick : selectedKeyframes.keyframeTicks()) {
-                    Keyframe keyframe = keyframeTrack.keyframesByTick.get(tick);
-                    keyframes.put(tick - minTick, keyframe);
-                }
-
-                tracks.add(new SavedTrack(selectedKeyframes.type(), selectedKeyframes.trackIndex(), !keyframeTrack.enabled, keyframes));
-            }
-
-            String serialized = FlashbackGson.COMPRESSED.toJson(tracks);
-            GLFW.glfwSetClipboardString(Minecraft.getInstance().getWindow().getWindow(), serialized);
-
-            ReplayUI.setInfoOverlay("Copied " + keyframeCount + " keyframe(s) to clipboard");
+            performCopy(editorState, totalTicks, false, false, false);
         }
 
         if (pressedPaste) {
             try {
                 String clipboard = GLFW.glfwGetClipboardString(Minecraft.getInstance().getWindow().getWindow());
-                if (clipboard != null && clipboard.startsWith("[")) {
+                if (clipboard == null) {
+                    return;
+                }
+                clipboard = clipboard.trim();
+
+                CopiedKeyframes copiedKeyframes;
+                if (clipboard.startsWith("{") && clipboard.endsWith("}")) {
+                    copiedKeyframes = FlashbackGson.COMPRESSED.fromJson(clipboard, CopiedKeyframes.class);
+                } else if (clipboard.startsWith("[") && clipboard.endsWith("]")) {
+                    // Keep accepting clipboard data produced by pre-0.39.7 Flashback.
                     TypeToken<?> typeToken = TypeToken.getParameterized(List.class, SavedTrack.class);
 
                     // noinspection unchecked
                     List<SavedTrack> tracks = (List<SavedTrack>) FlashbackGson.COMPRESSED.fromJson(clipboard, typeToken);
+                    copiedKeyframes = new CopiedKeyframes();
+                    copiedKeyframes.savedTracks = tracks;
+                } else {
+                    return;
+                }
 
-                    int count = 0;
-                    for (SavedTrack savedTrack : tracks) {
-                        count += savedTrack.applyToEditorState(editorState, cursorTicks, totalTicks);
+                KeyframeRelativeOffsets offsets = new KeyframeRelativeOffsets();
+                LocalPlayer player = Minecraft.getInstance().player;
+                if (player != null) {
+                    if (copiedKeyframes.relativePosition != null) {
+                        offsets.oldOrigin = copiedKeyframes.relativePosition;
+                        offsets.newOrigin = new Vector3d(player.getX(), player.getY(), player.getZ());
                     }
+                    if (copiedKeyframes.relativeYaw != null) {
+                        offsets.oldYaw = copiedKeyframes.relativeYaw;
+                        offsets.newYaw = player.getViewYRot(1.0f);
+                    }
+                    if (copiedKeyframes.relativePitch != null) {
+                        offsets.oldPitch = copiedKeyframes.relativePitch;
+                        offsets.newPitch = player.getViewXRot(1.0f);
+                    }
+                }
 
-                    ReplayUI.setInfoOverlay("Pasted " + count + " keyframe(s) from clipboard");
+                int count = 0;
+                for (SavedTrack savedTrack : copiedKeyframes.savedTracks) {
+                    count += savedTrack.applyToEditorState(editorState, cursorTicks, totalTicks, offsets);
+                }
+
+                if (count > 0) {
+                    ReplayUI.setInfoOverlay(I18n.get("flashback.pasted_n_keyframes_from_clipboard", count));
                 }
             } catch (Exception ignored) {}
         }
+    }
+
+    private static void performCopy(EditorState editorState, int totalTicks, boolean relativePosition,
+                                    boolean relativeYaw, boolean relativePitch) {
+        List<SavedTrack> tracks = new ArrayList<>();
+        int minTick = totalTicks;
+        int keyframeCount = 0;
+
+        for (SelectedKeyframes selectedKeyframes : selectedKeyframesList) {
+            for (int keyframeTick : selectedKeyframes.keyframeTicks()) {
+                minTick = Math.min(minTick, keyframeTick);
+                keyframeCount++;
+            }
+        }
+
+        for (SelectedKeyframes selectedKeyframes : selectedKeyframesList) {
+            KeyframeTrack keyframeTrack = editorState.keyframeTracks.get(selectedKeyframes.trackIndex());
+            TreeMap<Integer, Keyframe> keyframes = new TreeMap<>();
+            for (int tick : selectedKeyframes.keyframeTicks()) {
+                Keyframe keyframe = keyframeTrack.keyframesByTick.get(tick);
+                if (keyframe != null) {
+                    keyframes.put(tick - minTick, keyframe);
+                }
+            }
+            tracks.add(new SavedTrack(selectedKeyframes.type(), selectedKeyframes.trackIndex(),
+                !keyframeTrack.enabled, keyframes));
+        }
+
+        CopiedKeyframes copiedKeyframes = new CopiedKeyframes();
+        LocalPlayer player = Minecraft.getInstance().player;
+        if (player != null) {
+            copiedKeyframes.relativePosition = relativePosition
+                ? new Vector3d(player.getX(), player.getY(), player.getZ()) : null;
+            copiedKeyframes.relativeYaw = relativeYaw ? player.getViewYRot(1.0f) : null;
+            copiedKeyframes.relativePitch = relativePitch ? player.getViewXRot(1.0f) : null;
+        }
+        copiedKeyframes.savedTracks = tracks;
+
+        String serialized = FlashbackGson.COMPRESSED.toJson(copiedKeyframes);
+        GLFW.glfwSetClipboardString(Minecraft.getInstance().getWindow().getWindow(), serialized);
+        ReplayUI.setInfoOverlay(I18n.get("flashback.copied_n_keyframes_to_clipboard", keyframeCount));
     }
 
     private static void removeAllSelectedKeyframes(EditorState editorState) {
@@ -744,6 +827,7 @@ public class TimelineWindow {
                 } else {
                     replayServer.goToReplayTick(0);
                 }
+                replayServer.forceApplyKeyframes.set(true);
                 return;
             }
 
@@ -796,6 +880,7 @@ public class TimelineWindow {
                 } else {
                     replayServer.goToReplayTick(replayServer.getTotalReplayTicks());
                 }
+                replayServer.forceApplyKeyframes.set(true);
                 return;
             }
         }
@@ -960,7 +1045,7 @@ public class TimelineWindow {
         }
     }
 
-    private static void renderKeyframeOptionsPopup(EditorState editorState) {
+    private static void renderKeyframeOptionsPopup(EditorState editorState, int totalTicks) {
         if (editingKeyframeTrack < 0 || editingKeyframeTick < 0) {
             return;
         }
@@ -1070,6 +1155,32 @@ public class TimelineWindow {
                 cameraKeyframe.apply(new MinecraftKeyframeHandler(Minecraft.getInstance()));
             }
         }
+
+        if (editingKeyframe instanceof CameraKeyframe || editingKeyframe instanceof CameraOrbitKeyframe) {
+            if (ImGui.button(I18n.get("flashback.copy_relative") + "##CopyRelative")) {
+                ImGui.openPopup("##CopyOptions");
+            }
+            if (ImGuiHelper.beginPopup("##CopyOptions")) {
+                if (ImGui.checkbox(I18n.get("flashback.copy_relative_to_position") + "##CopyRelativeToPos",
+                    copyRelativeToPosition)) {
+                    copyRelativeToPosition = !copyRelativeToPosition;
+                }
+                if (ImGui.checkbox(I18n.get("flashback.copy_relative_to_yaw") + "##CopyRelativeToYaw",
+                    copyRelativeToYaw)) {
+                    copyRelativeToYaw = !copyRelativeToYaw;
+                }
+                if (ImGui.checkbox(I18n.get("flashback.copy_relative_to_pitch") + "##CopyRelativeToPitch",
+                    copyRelativeToPitch)) {
+                    copyRelativeToPitch = !copyRelativeToPitch;
+                }
+                if (ImGui.button(I18n.get("flashback.do_copy_relative") + "##DoCopyRelative")) {
+                    performCopy(editorState, totalTicks, copyRelativeToPosition, copyRelativeToYaw,
+                        copyRelativeToPitch);
+                    ImGui.closeCurrentPopup();
+                }
+                ImGui.endPopup();
+            }
+        }
     }
 
     private static void releaseGrabbed(EditorState editorState, ReplayServer replayServer, int totalTicks) {
@@ -1122,6 +1233,7 @@ public class TimelineWindow {
         if (grabbedPlayback) {
             int desiredTick = timelineXToReplayTick(mouseX - x);
             replayServer.goToReplayTick(desiredTick);
+            replayServer.forceApplyKeyframes.set(true);
             replayServer.replayPaused = true;
             grabbedPlayback = false;
         }

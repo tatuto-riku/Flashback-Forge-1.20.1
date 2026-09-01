@@ -1,11 +1,9 @@
 package com.moulberry.flashback.mixin.playback;
 
 import com.moulberry.flashback.Flashback;
-import com.moulberry.flashback.packet.FinishedServerTick;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.network.protocol.PacketUtils;
-import net.minecraft.network.protocol.game.ClientboundCustomPayloadPacket;
 import net.minecraft.network.protocol.game.ClientboundResourcePackPacket;
 import org.jetbrains.annotations.Nullable;
 import org.spongepowered.asm.mixin.Final;
@@ -45,16 +43,6 @@ public abstract class MixinClientCommonPacketListenerImpl {
                 this.minecraft.getDownloadedPackSource().downloadAndSelectResourcePack(uRL, string, true);
             }
 
-            ci.cancel();
-        }
-    }
-
-    @Inject(method = "handleCustomPayload(Lnet/minecraft/network/protocol/game/ClientboundCustomPayloadPacket;)V", at = @At("HEAD"), cancellable = true)
-    public void handleCustomPayload(ClientboundCustomPayloadPacket clientboundCustomPayloadPacket, CallbackInfo ci) {
-        if (clientboundCustomPayloadPacket.getIdentifier() == FinishedServerTick.TYPE.getId()) {
-            if (Flashback.EXPORT_JOB != null) {
-                Flashback.EXPORT_JOB.onFinishedServerTick();
-            }
             ci.cancel();
         }
     }

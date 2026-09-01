@@ -1,6 +1,5 @@
 package com.moulberry.flashback;
 
-import net.fabricmc.loader.api.FabricLoader;
 import org.apache.commons.io.FileUtils;
 
 import java.io.IOException;

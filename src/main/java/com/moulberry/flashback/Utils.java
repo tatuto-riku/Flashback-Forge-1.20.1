@@ -2,6 +2,7 @@ package com.moulberry.flashback;
 
 import com.moulberry.flashback.playback.ReplayServer;
 import it.unimi.dsi.fastutil.objects.Object2FloatFunction;
+import net.minecraft.network.chat.Component;
 import org.jetbrains.annotations.Nullable;
 
 import java.lang.reflect.Field;
@@ -60,6 +61,10 @@ public class Utils {
         } else {
             return ClosestElement.NONE;
         }
+    }
+
+    public static boolean isComponentEmpty(Component component) {
+        return component == null || component.getString().isEmpty();
     }
 
     public static float fovToFocalLength(float fov) {

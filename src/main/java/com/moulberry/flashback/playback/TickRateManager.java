@@ -16,6 +16,11 @@ public class TickRateManager {
     private boolean runGameElements = true;
     private boolean isServerTickRateManager = false;
 
+    // True while Minecraft is manually ticking the local player outside of ClientLevel#tickEntities.
+    // Entity freezing must never cancel that tick, otherwise the local player stops getting ticked
+    // entirely and the replay camera can't be moved.
+    private boolean manualLocalPlayerTick = false;
+
     public TickRateManager(boolean isServerTickRateManager) {
         this.isServerTickRateManager = isServerTickRateManager;
         if (this.isServerTickRateManager) {
@@ -55,6 +60,14 @@ public class TickRateManager {
 
     public void tick() {
         this.runGameElements = !this.isFrozen && !this.isServerTickRateManager;
+    }
+
+    public boolean isManualLocalPlayerTick() {
+        return this.manualLocalPlayerTick;
+    }
+
+    public void setManualLocalPlayerTick(boolean manualLocalPlayerTick) {
+        this.manualLocalPlayerTick = manualLocalPlayerTick;
     }
 
     public boolean isEntityFrozen(Entity entity) {

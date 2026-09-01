@@ -7,7 +7,6 @@ import com.moulberry.flashback.SneakyThrow;
 import com.moulberry.flashback.TempFolderProvider;
 import com.moulberry.flashback.action.ActionGamePacket;
 import com.moulberry.flashback.action.ActionLevelChunkCached;
-import com.moulberry.flashback.compat.valkyrienskies.ValkyrienSkiesSupport;
 import com.moulberry.flashback.playback.ReplayServer;
 import io.netty.buffer.Unpooled;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
@@ -18,10 +17,7 @@ import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.PacketFlow;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundBundlePacket;
-import net.minecraft.network.protocol.game.ClientboundCustomPayloadPacket;
 import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
-import net.minecraft.resources.ResourceLocation;
-import org.valkyrienskies.mod.common.ValkyrienSkiesMod;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -189,19 +185,6 @@ public class AsyncReplaySaver {
         if (packetId == -1) {
             Flashback.LOGGER.error("Could not get packet id of packet {}!", packet.getClass());
             return customPayloadTempBuffer;
-        }
-
-        if (packet instanceof ClientboundCustomPayloadPacket cp) {
-            if (cp.getIdentifier().equals(new ResourceLocation(ValkyrienSkiesMod.MOD_ID, "vs_packet"))) {
-                var data = cp.getData();
-                var action = ValkyrienSkiesSupport.getAction(data);
-                if (action != null) {
-                    writer.startAction(action);
-                    writer.friendlyByteBuf().writeBytes(data);
-                    writer.finishAction(action);
-                    return customPayloadTempBuffer;
-                }
-            }
         }
 
         writer.startAction(ActionGamePacket.INSTANCE);

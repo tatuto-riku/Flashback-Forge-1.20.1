@@ -6,7 +6,6 @@ import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.moulberry.flashback.Flashback;
 import com.moulberry.flashback.playback.ReplayPlayer;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.util.profiling.ProfilerFiller;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.raid.Raids;
 import net.minecraft.world.level.border.WorldBorder;
@@ -48,8 +47,8 @@ public class MixinServerLevel {
         return !Flashback.isInReplay();
     }
 
-    @Inject(method = "method_31420", at = @At(value = "INVOKE", target = "Lnet/minecraft/util/profiling/ProfilerFiller;push(Ljava/lang/String;)V", ordinal = 0), cancellable = true)
-    public void tickEntity(ProfilerFiller filler, Entity entity, CallbackInfo ci) {
+    @Inject(method = "tickNonPassenger", at = @At("HEAD"), cancellable = true)
+    private void tickEntity(Entity entity, CallbackInfo ci) {
         if (Flashback.isInReplay() && !(entity instanceof ReplayPlayer)) {
             ci.cancel();
         }

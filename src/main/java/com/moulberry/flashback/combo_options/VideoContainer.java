@@ -1,5 +1,6 @@
 package com.moulberry.flashback.combo_options;
 
+import com.moulberry.flashback.Flashback;
 import org.bytedeco.ffmpeg.avformat.AVOutputFormat;
 import org.bytedeco.ffmpeg.global.avcodec;
 import org.bytedeco.ffmpeg.global.avformat;
@@ -23,6 +24,7 @@ public enum VideoContainer implements ComboOption {
     private VideoCodec[] supportedVideoCodecs = null;
     private VideoCodec[] supportedVideoCodecsWithTransparency = null;
     private AudioCodec[] supportedAudioCodecs = null;
+    private static boolean loggedNativeFailure;
 
     VideoContainer(String text, String extension) {
         this.text = text;
@@ -54,25 +56,30 @@ public enum VideoContainer implements ComboOption {
         if (codecs == null) {
             List<VideoCodec> supportedCodecs = new ArrayList<>();
 
-            if (this != VideoContainer.PNG_SEQUENCE) {
-                try (AVOutputFormat outputFormat = avformat.av_guess_format(this.extension, "test."+this.extension, null)) {
-                    for (VideoCodec codec : VideoCodec.values()) {
-                        if (codec == VideoCodec.AV1 && this != VideoContainer.MP4) {
-                            continue;
-                        }
-                        if (codec.getEncoders().length == 0) {
-                            continue;
-                        }
-                        if (transparency && !codec.supportsTransparency()) {
-                            continue;
-                        }
+            try {
+                if (this != VideoContainer.PNG_SEQUENCE) {
+                    try (AVOutputFormat outputFormat = avformat.av_guess_format(this.extension, "test."+this.extension, null)) {
+                        for (VideoCodec codec : VideoCodec.values()) {
+                            if (codec == VideoCodec.AV1 && this != VideoContainer.MP4) {
+                                continue;
+                            }
+                            if (codec.getEncoders().length == 0) {
+                                continue;
+                            }
+                            if (transparency && !codec.supportsTransparency()) {
+                                continue;
+                            }
 
-                        int ret = avformat.avformat_query_codec(outputFormat, codec.codecId(), avcodec.FF_COMPLIANCE_NORMAL);
-                        if (ret == 1) {
-                            supportedCodecs.add(codec);
+                            int ret = avformat.avformat_query_codec(outputFormat, codec.codecId(), avcodec.FF_COMPLIANCE_NORMAL);
+                            if (ret == 1) {
+                                supportedCodecs.add(codec);
+                            }
                         }
                     }
                 }
+            } catch (Throwable throwable) {
+                logNativeFailure(throwable);
+                supportedCodecs.clear();
             }
 
             codecs = supportedCodecs.toArray(new VideoCodec[0]);
@@ -88,23 +95,35 @@ public enum VideoContainer implements ComboOption {
     public AudioCodec[] getSupportedAudioCodecs() {
         if (this.supportedAudioCodecs == null) {
             List<AudioCodec> supportedCodecs = new ArrayList<>();
-            if (this != VideoContainer.PNG_SEQUENCE) {
-                try (AVOutputFormat outputFormat = avformat.av_guess_format(this.extension, "test."+this.extension, null)) {
-                    for (AudioCodec codec : AudioCodec.values()) {
-                        if (codec.getEncoders().length == 0) {
-                            continue;
-                        }
+            try {
+                if (this != VideoContainer.PNG_SEQUENCE) {
+                    try (AVOutputFormat outputFormat = avformat.av_guess_format(this.extension, "test."+this.extension, null)) {
+                        for (AudioCodec codec : AudioCodec.values()) {
+                            if (codec.getEncoders().length == 0) {
+                                continue;
+                            }
 
-                        int ret = avformat.avformat_query_codec(outputFormat, codec.codecId(), avcodec.FF_COMPLIANCE_NORMAL);
-                        if (ret == 1) {
-                            supportedCodecs.add(codec);
+                            int ret = avformat.avformat_query_codec(outputFormat, codec.codecId(), avcodec.FF_COMPLIANCE_NORMAL);
+                            if (ret == 1) {
+                                supportedCodecs.add(codec);
+                            }
                         }
                     }
                 }
+            } catch (Throwable throwable) {
+                logNativeFailure(throwable);
+                supportedCodecs.clear();
             }
             this.supportedAudioCodecs = supportedCodecs.toArray(new AudioCodec[0]);
         }
         return this.supportedAudioCodecs;
+    }
+
+    private static synchronized void logNativeFailure(Throwable throwable) {
+        if (!loggedNativeFailure) {
+            loggedNativeFailure = true;
+            Flashback.LOGGER.error("Unable to initialize FFmpeg. Video export formats will be unavailable; PNG sequence export remains available.", throwable);
+        }
     }
 
 }

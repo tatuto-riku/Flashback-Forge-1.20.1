@@ -3,6 +3,7 @@ package com.moulberry.flashback.playback;
 import com.mojang.authlib.GameProfile;
 import com.mojang.datafixers.util.Either;
 import com.moulberry.flashback.Flashback;
+import com.moulberry.flashback.ServerPlayNetworking;
 import com.moulberry.flashback.PacketHelper;
 import com.moulberry.flashback.exception.UnsupportedPacketException;
 import com.moulberry.flashback.ext.LevelChunkExt;
@@ -12,12 +13,9 @@ import com.moulberry.flashback.packet.FlashbackRemoteExperience;
 import com.moulberry.flashback.packet.FlashbackRemoteFoodData;
 import com.moulberry.flashback.packet.FlashbackRemoteSelectHotbarSlot;
 import com.moulberry.flashback.packet.FlashbackRemoteSetSlot;
-import io.github.fabricators_of_create.porting_lib.core.PortingLib;
-import io.github.fabricators_of_create.porting_lib.entity.IEntityAdditionalSpawnData;
 import io.netty.channel.embedded.EmbeddedChannel;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
-import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.PlayerInfo;
 import net.minecraft.client.player.RemotePlayer;
@@ -45,6 +43,7 @@ import net.minecraft.tags.TagNetworkSerialization;
 import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.entity.Entity;
+import net.minecraftforge.entity.IEntityAdditionalSpawnData;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.ExperienceOrb;
 import net.minecraft.world.entity.LightningBolt;
@@ -862,11 +861,7 @@ public class ReplayGamePacketHandler implements ClientGamePacketListener {
     @Override
     public void handleParticleEvent(ClientboundLevelParticlesPacket clientboundLevelParticlesPacket) {
         for (ServerPlayer viewer : this.replayServer.getReplayViewers()) {
-            boolean overrideLimiter = clientboundLevelParticlesPacket.isOverrideLimiter();
-            double x = clientboundLevelParticlesPacket.getX();
-            double y = clientboundLevelParticlesPacket.getY();
-            double z = clientboundLevelParticlesPacket.getZ();
-            this.level().sendParticles(viewer, overrideLimiter, x, y, z, clientboundLevelParticlesPacket);
+            viewer.connection.send(clientboundLevelParticlesPacket);
         }
     }
 
@@ -1531,7 +1526,7 @@ public class ReplayGamePacketHandler implements ClientGamePacketListener {
         if (entity instanceof IEntityAdditionalSpawnData extra) {
             extra.readSpawnData(buf);
         } else {
-            PortingLib.LOGGER.error("ExtraSpawnDataEntity spawn data received, but no corresponding entity was found! Entity: [{}]", entity);
+            Flashback.LOGGER.error("Extra spawn data received, but no corresponding Forge entity was found: [{}]", entity);
         }
     }
 }

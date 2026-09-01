@@ -4,7 +4,7 @@ import com.moulberry.flashback.Flashback;
 import com.moulberry.flashback.configuration.FlashbackConfig;
 import com.moulberry.flashback.exporting.AsyncFileDialogs;
 import com.moulberry.flashback.exporting.ExportJobQueue;
-import com.moulberry.flashback.screen.SelectReplayScreen;
+import com.moulberry.flashback.screen.select_replay.SelectReplayScreen;
 import imgui.ImGui;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.TitleScreen;
@@ -88,6 +88,9 @@ public class MainMenuBar {
         }
         if (ImGui.menuItem("Movement")) {
             toggleWindow("movement");
+        }
+        if (ImGui.menuItem("Render Filter")) {
+            toggleWindow("render_filter");
         }
 
         ImGui.separator();

@@ -1,248 +1,227 @@
 buildscript {
     repositories {
-        mavenCentral()
-        maven { url 'https://jitpack.io' }
-        maven { url "https://plugins.gradle.org/m2/" }
+        maven { url = 'https://repo.spongepowered.org/repository/maven-public/' }
     }
     dependencies {
-        classpath "gradle.plugin.com.github.johnrengelman:shadow:7.1.0"
+        classpath 'org.spongepowered:mixingradle:0.7-SNAPSHOT'
     }
 }
 
 plugins {
-	id 'fabric-loom' version '1.9-SNAPSHOT'
-    id 'com.github.johnrengelman.shadow' version "7.1.2"
-	id 'maven-publish'
+    id 'eclipse'
+    id 'idea'
+    id 'maven-publish'
+    id 'net.minecraftforge.gradle' version '[6.0,6.2)'
+    id 'com.github.johnrengelman.shadow' version '8.1.1'
 }
+
+apply plugin: 'org.spongepowered.mixin'
 
 version = project.mod_version
 group = project.maven_group
 
 base {
-	archivesName = project.archives_base_name
-}
-
-repositories {
-    maven {
-		url = "https://pkgs.dev.azure.com/djtheredstoner/DevAuth/_packaging/public/maven/v1"
-		content {
-			includeGroup("me.djtheredstoner")
-		}
-	}
-	maven {
-		url 'https://api.modrinth.com/maven'
-		content {
-			includeGroup("maven.modrinth")
-		}
-	}
-    maven { url = "https://maven.bawnorton.com/releases" }
-	maven { url = "https://mvn.devos.one/snapshots/" }
-	maven { url = "https://mvn.devos.one/releases/" }
-	maven { url = "https://raw.githubusercontent.com/Fuzss/modresources/main/maven/" }
-	maven { url = "https://modmaven.dev" }
-	maven { url = 'https://maven.valkyrienskies.org' }
-	maven { // Reach Entity Attributes
-		url = "https://maven.jamieswhiteshirt.com/libs-release"
-		content { includeGroup("com.jamieswhiteshirt") }
-	}
-	maven { // for Porting Lib: Mixin Extras, Fabric ASM
-		url = "https://jitpack.io/"
-		content { includeGroupAndSubgroups("com.github") }
-	}
-}
-
-loom {
-	accessWidenerPath = file("src/main/resources/flashback.accesswidener")
-
-//    splitEnvironmentSourceSets()
-//
-//	mods {
-//		"flashback" {
-//			sourceSet sourceSets.main
-//			sourceSet sourceSets.client
-//		}
-//	}
-}
-
-dependencies {
-	// To change the versions see the gradle.properties file
-	minecraft "com.mojang:minecraft:${project.minecraft_version}"
-	mappings loom.officialMojangMappings()
-	modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
-
-    modRuntimeOnly("me.djtheredstoner:DevAuth-fabric:1.1.2")
-
-	// Fabric API. This is technically optional, but you probably want it anyway.
-	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
-
-	include(implementation("com.moulberry:mixinconstraints:1.0.1"))
-
-	modImplementation("maven.modrinth:sodium:mc1.20.1-0.5.13-fabric")
-	modImplementation("maven.modrinth:indium:1.0.36+mc1.20.1")
-    modCompileOnly("maven.modrinth:iris:1.7.6+1.20.1")
-
-	modImplementation("maven.modrinth:distanthorizons:2.3.4-b-1.20.1")
-    modCompileOnly("maven.modrinth:bobby:5.0.1")
-    modCompileOnly("maven.modrinth:simple-voice-chat:fabric-1.20.1-2.5.24")
-    modCompileOnly("maven.modrinth:replaymod:1.20.1-2.6.19")
-	modImplementation("maven.modrinth:modmenu:7.2.2")
-
-	// Create
-	modImplementation("com.simibubi.create:create-fabric-${minecraft_version}:0.5.1-f-build.1335+mc1.20.1")
-
-	// Immersive Aircraft
-	modRuntimeOnly("maven.modrinth:immersive-aircraft:1.1.2+1.20.1")
-	runtimeOnly('org.mariuszgromada.math:MathParser.org-mXparser:5.2.1')
-
-	// Valkyrien Skies
-	modApi("org.valkyrienskies:valkyrienskies-120-fabric:${vs2_version}") {
-		exclude group: 'com.simibubi', module: ''
-		exclude group: 'dev.engine-room', module: ''
-		exclude group: 'com.jozufozu', module: ''
-	}
-	implementation("org.valkyrienskies.core:api:${vscore_version}") {
-		exclude group: 'org.joml', module: ''
-	}
-	implementation("org.valkyrienskies.core:api-game:${vscore_version}") {
-		exclude group: 'org.joml', module: ''
-	}
-	implementation("org.valkyrienskies.core:util:${vscore_version}") {
-		exclude group: 'org.joml', module: ''
-	}
-
-    include(implementation(annotationProcessor("com.github.bawnorton.mixinsquared:mixinsquared-fabric:0.2.0-beta.6")))
-
-	shadow(implementation("org.bytedeco:javacv-platform:1.5.10") {
-		exclude group: "org.bytedeco", module: "artoolkitplus"
-		exclude group: "org.bytedeco", module: "artoolkitplus-platform"
-		exclude group: "org.bytedeco", module: "flycapture"
-		exclude group: "org.bytedeco", module: "flycapture-platform"
-		exclude group: "org.bytedeco", module: "leptonica"
-		exclude group: "org.bytedeco", module: "leptonica-platform"
-		exclude group: "org.bytedeco", module: "libdc1394"
-		exclude group: "org.bytedeco", module: "libdc1394-platform"
-		exclude group: "org.bytedeco", module: "libfreenect"
-		exclude group: "org.bytedeco", module: "libfreenect-platform"
-		exclude group: "org.bytedeco", module: "libfreenect2"
-		exclude group: "org.bytedeco", module: "libfreenect2-platform"
-		exclude group: "org.bytedeco", module: "librealsense2"
-		exclude group: "org.bytedeco", module: "librealsense2-platform"
-		exclude group: "org.bytedeco", module: "librealsense"
-		exclude group: "org.bytedeco", module: "librealsense-platform"
-		exclude group: "org.bytedeco", module: "openblas"
-		exclude group: "org.bytedeco", module: "openblas-platform"
-		exclude group: "org.bytedeco", module: "opencv"
-		exclude group: "org.bytedeco", module: "opencv-platform"
-		exclude group: "org.bytedeco", module: "tesseract"
-		exclude group: "org.bytedeco", module: "tesseract-platform"
-		exclude group: "org.bytedeco", module: "videoinput"
-		exclude group: "org.bytedeco", module: "videoinput-platform"
-	})
-//	implementation 'org.jcodec:jcodec:0.2.5'
-//	implementation("com.github.zakgof:velvet-video:0.5.2")
-//	implementation("com.github.zakgof:velvet-video-natives:0.2.8.free")
-
-    // ImGui
-	shadow(implementation(rootProject.files('deps/imgui-java-binding-1.86.11-10-g0dbf36c.jar')))
-	shadow(implementation("io.github.spair:imgui-java-lwjgl3:1.86.10") {
-		exclude group: 'org.lwjgl'
-		exclude group: 'org.lwjgl.lwjgl'
-	})
-	shadow(api(rootProject.files('deps/imgui-java-natives-linux-1.86.11-10-g0dbf36c.jar')))
-	shadow(api(rootProject.files('deps/imgui-java-natives-macos-1.86.11-10-g0dbf36c.jar')))
-	shadow(api(rootProject.files('deps/imgui-java-natives-windows-1.86.11-10-g0dbf36c.jar')))
-
-	// Native File Dialogs
-	String nfdVersion = "org.lwjgl:lwjgl-nfd:3.3.2";
-
-	shadow(implementation(nfdVersion) {
-		exclude group: 'org.lwjgl'
-		exclude group: 'org.lwjgl.lwjgl'
-	})
-	shadow(api("org.lwjgl:lwjgl-nfd::natives-macos") {
-		exclude group: 'org.lwjgl'
-		exclude group: 'org.lwjgl.lwjgl'
-	})
-	shadow(api("org.lwjgl:lwjgl-nfd::natives-linux") {
-		exclude group: 'org.lwjgl'
-		exclude group: 'org.lwjgl.lwjgl'
-	})
-	shadow(api("org.lwjgl:lwjgl-nfd::natives-windows") {
-		exclude group: 'org.lwjgl'
-		exclude group: 'org.lwjgl.lwjgl'
-	})
-	shadow(api("org.lwjgl:lwjgl-nfd::natives-macos-arm64") {
-		exclude group: 'org.lwjgl'
-		exclude group: 'org.lwjgl.lwjgl'
-	})
-	shadow(api("org.lwjgl:lwjgl-nfd::natives-linux-arm64") {
-		exclude group: 'org.lwjgl'
-		exclude group: 'org.lwjgl.lwjgl'
-	})
-	shadow(api("org.lwjgl:lwjgl-nfd::natives-windows-arm64") {
-		exclude group: 'org.lwjgl'
-		exclude group: 'org.lwjgl.lwjgl'
-	})
-}
-
-processResources {
-	inputs.property "version", project.version
-
-	filesMatching("fabric.mod.json") {
-		expand "version": project.version
-	}
-}
-
-tasks.withType(JavaCompile).configureEach {
-	it.options.release = 17
+    archivesName = project.archives_base_name
 }
 
 java {
-	// Loom will automatically attach sourcesJar to a RemapSourcesJar task and to the "build" task
-	// if it is present.
-	// If you remove this line, sources will not be generated.
-	withSourcesJar()
-
-	sourceCompatibility = JavaVersion.VERSION_17
-	targetCompatibility = JavaVersion.VERSION_17
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
 }
 
-jar {
-	from("LICENSE") {
-		rename { "${it}_${project.base.archivesName.get()}"}
-	}
+minecraft {
+    mappings channel: 'official', version: project.minecraft_version
+    accessTransformer = file('src/main/resources/META-INF/accesstransformer.cfg')
+    copyIdeResources = true
+
+    runs {
+        configureEach {
+            workingDirectory project.file('run')
+            property 'forge.logging.console.level', 'info'
+            property 'mixin.env.remapRefMap', 'true'
+            property 'mixin.env.refMapRemappingFile', "${projectDir}/build/createMcpToSrg/output.tsrg"
+            mods {
+                flashback {
+                    source sourceSets.main
+                }
+            }
+        }
+        client {}
+    }
 }
 
-
-shadowJar {
-    configurations = [project.configurations.shadow]
-    archiveBaseName = "Flashback-all.jar"
-    destinationDirectory = file("${buildDir}/tmp/allJar")
-
-    exclude("LICENSE")
-    exclude("LICENSE.txt")
+mixin {
+    add sourceSets.main, 'flashback.refmap.json'
+    config 'flashback.mixins.json'
 }
 
-remapJar {
-	dependsOn(shadowJar)
-	input = shadowJar.getArchiveFile()
+repositories {
+    mavenCentral()
+    maven { url = 'https://maven.minecraftforge.net/' }
+    maven { url = 'https://jitpack.io/' }
+    maven { url = 'https://repo.spongepowered.org/repository/maven-public/' }
+    maven {
+        url = 'https://api.modrinth.com/maven'
+        content { includeGroup 'maven.modrinth' }
+    }
 }
 
+configurations {
+    shade
+    implementation.extendsFrom shade
+}
 
-// configure the maven publication
+sourceSets.main.java {
+    // Loader-specific integrations are intentionally kept out of the native Forge build.
+    // Core recording, replay playback and exporting do not require these integrations.
+    exclude 'com/moulberry/flashback/FlashbackModMenuApiImpl.java'
+    exclude 'com/moulberry/flashback/exporting/FrexFlawlessFramesIntegration.java'
+    exclude 'com/moulberry/flashback/compat/simple_voice_chat/**'
+    exclude 'com/moulberry/flashback/compat/valkyrienskies/**'
+    exclude 'com/moulberry/flashback/mixin/compat/**'
+    exclude 'com/moulberry/flashback/mixin/playback/MixinServerTickEvents.java'
+    exclude 'com/moulberry/flashback/packet/FlashbackVoiceChatSound.java'
+}
+
+def devRuntimeJar = tasks.register('devRuntimeJar', com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar) {
+    archiveBaseName = 'flashback-dev-libraries'
+    archiveClassifier = ''
+    archiveVersion = ''
+    destinationDirectory = layout.buildDirectory.dir('dev-libraries')
+    configurations = [project.configurations.shade]
+    exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA'
+    exclude 'META-INF/MANIFEST.MF'
+    exclude 'META-INF/versions/**/module-info.class'
+    exclude 'module-info.class'
+    exclude 'com/llamalad7/mixinextras/**'
+    exclude 'META-INF/services/javax.annotation.processing.Processor'
+}
+
+dependencies {
+    minecraft "net.minecraftforge:forge:${project.minecraft_version}-${project.forge_version}"
+
+    annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
+    annotationProcessor 'io.github.llamalad7:mixinextras-common:0.3.6'
+    runtimeOnly fg.deobf('io.github.llamalad7:mixinextras-forge:0.3.6')
+    shade 'io.github.llamalad7:mixinextras-common:0.3.6'
+    minecraftLibrary files(devRuntimeJar.map { it.archiveFile })
+    compileOnly 'maven.modrinth:distanthorizons:3.2.0-b-1.20.1'
+
+    shade(implementation('org.bytedeco:javacv-platform:1.5.10') {
+        exclude group: 'org.bytedeco', module: 'artoolkitplus'
+        exclude group: 'org.bytedeco', module: 'artoolkitplus-platform'
+        exclude group: 'org.bytedeco', module: 'flycapture'
+        exclude group: 'org.bytedeco', module: 'flycapture-platform'
+        exclude group: 'org.bytedeco', module: 'leptonica'
+        exclude group: 'org.bytedeco', module: 'leptonica-platform'
+        exclude group: 'org.bytedeco', module: 'libdc1394'
+        exclude group: 'org.bytedeco', module: 'libdc1394-platform'
+        exclude group: 'org.bytedeco', module: 'libfreenect'
+        exclude group: 'org.bytedeco', module: 'libfreenect-platform'
+        exclude group: 'org.bytedeco', module: 'libfreenect2'
+        exclude group: 'org.bytedeco', module: 'libfreenect2-platform'
+        exclude group: 'org.bytedeco', module: 'librealsense2'
+        exclude group: 'org.bytedeco', module: 'librealsense2-platform'
+        exclude group: 'org.bytedeco', module: 'librealsense'
+        exclude group: 'org.bytedeco', module: 'librealsense-platform'
+        exclude group: 'org.bytedeco', module: 'openblas'
+        exclude group: 'org.bytedeco', module: 'openblas-platform'
+        exclude group: 'org.bytedeco', module: 'opencv'
+        exclude group: 'org.bytedeco', module: 'opencv-platform'
+        exclude group: 'org.bytedeco', module: 'tesseract'
+        exclude group: 'org.bytedeco', module: 'tesseract-platform'
+        exclude group: 'org.bytedeco', module: 'videoinput'
+        exclude group: 'org.bytedeco', module: 'videoinput-platform'
+    })
+
+    shade(implementation('io.github.spair:imgui-java-binding:1.86.10'))
+    shade(implementation('io.github.spair:imgui-java-lwjgl3:1.86.10') {
+        exclude group: 'org.lwjgl'
+        exclude group: 'org.lwjgl.lwjgl'
+    })
+    shade(implementation('io.github.spair:imgui-java-natives-linux:1.86.10'))
+    shade(implementation('io.github.spair:imgui-java-natives-macos:1.86.10'))
+    shade(implementation('io.github.spair:imgui-java-natives-windows:1.86.10'))
+
+    shade(implementation('org.lwjgl:lwjgl-nfd:3.3.2') {
+        exclude group: 'org.lwjgl'
+        exclude group: 'org.lwjgl.lwjgl'
+    })
+    ['macos', 'linux', 'windows', 'macos-arm64', 'linux-arm64', 'windows-arm64'].each { platform ->
+        shade(implementation("org.lwjgl:lwjgl-nfd:3.3.2:natives-${platform}") {
+            exclude group: 'org.lwjgl'
+            exclude group: 'org.lwjgl.lwjgl'
+        })
+    }
+}
+
+tasks.named('processResources', ProcessResources).configure {
+    inputs.property 'version', project.version
+    filesMatching('META-INF/mods.toml') {
+        expand version: project.version
+    }
+    exclude 'fabric.mod.json'
+    exclude 'flashback.accesswidener'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 17
+}
+
+tasks.named('jar', Jar).configure {
+    archiveClassifier = 'slim'
+    manifest {
+        attributes([
+            'Specification-Title': 'flashback',
+            'Specification-Vendor': 'Moulberry',
+            'Specification-Version': '1',
+            'Implementation-Title': 'Flashback Forge',
+            'Implementation-Version': project.version,
+            'Implementation-Vendor': 'Moulberry / Forge port',
+            'MixinConfigs': 'flashback.mixins.json'
+        ])
+    }
+}
+
+tasks.named('shadowJar', com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar).configure {
+    archiveClassifier = ''
+    configurations = [project.configurations.shade]
+    exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA'
+    exclude 'fabric.mod.json'
+    exclude 'flashback.accesswidener'
+    exclude 'META-INF/versions/**/module-info.class'
+    exclude 'module-info.class'
+    exclude 'com/llamalad7/mixinextras/ap/**'
+    exclude 'META-INF/services/javax.annotation.processing.Processor'
+    manifest.inheritFrom(tasks.jar.manifest)
+    from(sourceSets.main.output)
+}
+
+reobf {
+    shadowJar {}
+}
+
+tasks.named('build').configure {
+    dependsOn tasks.named('reobfShadowJar')
+}
+
+tasks.matching { it.name == 'prepareRunClient' }.configureEach {
+    dependsOn devRuntimeJar
+}
+
+afterEvaluate {
+    // MixinGradle attaches source/refmap work to every archive task. This archive
+    // contains dependencies only, so retaining that dependency creates a cycle.
+    devRuntimeJar.configure {
+        setDependsOn([])
+    }
+}
+
 publishing {
-	publications {
-		create("mavenJava", MavenPublication) {
-			artifactId = project.archives_base_name
-			from components.java
-		}
-	}
-
-	// See https://docs.gradle.org/current/userguide/publishing_maven.html for information on how to set up publishing.
-	repositories {
-		// Add repositories to publish to here.
-		// Notice: This block does NOT have the same function as the block in the top level.
-		// The repositories here will be used for publishing your artifact, not for
-		// retrieving dependencies.
-	}
+    publications {
+        register('mavenJava', MavenPublication) {
+            artifact tasks.shadowJar
+        }
+    }
 }

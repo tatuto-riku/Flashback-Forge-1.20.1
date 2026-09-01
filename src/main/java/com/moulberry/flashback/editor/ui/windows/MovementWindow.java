@@ -12,6 +12,7 @@ import imgui.ImGui;
 import imgui.ImGuiViewport;
 import imgui.flag.ImGuiCond;
 import imgui.flag.ImGuiWindowFlags;
+import imgui.type.ImBoolean;
 import imgui.type.ImString;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -48,7 +49,8 @@ public class MovementWindow {
         if (!wasDocked) {
             flags |= ImGuiWindowFlags.AlwaysAutoResize;
         }
-        if (ImGui.begin("Movement###Movement", flags)) {
+        ImBoolean open = new ImBoolean(true);
+        if (ImGui.begin("Movement###Movement", open, flags)) {
             wasDocked = ImGui.isWindowDocked();
 
             int[] direction = new int[]{config.flightCameraDirection ? 1 : 0};
@@ -102,6 +104,11 @@ public class MovementWindow {
 
         }
         ImGui.end();
+        if (!open.get()) {
+            config.openedWindows.remove("movement");
+            config.saveToDefaultFolder();
+            wasOpen = WindowOpenState.CLOSED;
+        }
     }
 
 }

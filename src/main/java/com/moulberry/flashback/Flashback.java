@@ -10,8 +10,6 @@ import com.mojang.serialization.Lifecycle;
 import com.moulberry.flashback.action.*;
 import com.moulberry.flashback.command.BetterColorArgument;
 import com.moulberry.flashback.compat.DistantHorizonsSupport;
-import com.moulberry.flashback.compat.simple_voice_chat.SimpleVoiceChatPlayback;
-import com.moulberry.flashback.compat.valkyrienskies.ValkyrienSkiesSupport;
 import com.moulberry.flashback.configuration.FlashbackConfig;
 import com.moulberry.flashback.exporting.AsyncFileDialogs;
 import com.moulberry.flashback.exporting.ExportJob;
@@ -21,9 +19,11 @@ import com.moulberry.flashback.keyframe.types.CameraKeyframeType;
 import com.moulberry.flashback.keyframe.types.CameraOrbitKeyframeType;
 import com.moulberry.flashback.keyframe.types.CameraShakeKeyframeType;
 import com.moulberry.flashback.keyframe.types.FOVKeyframeType;
+import com.moulberry.flashback.keyframe.types.FreezeKeyframeType;
 import com.moulberry.flashback.keyframe.types.SpeedKeyframeType;
 import com.moulberry.flashback.keyframe.types.TimeOfDayKeyframeType;
 import com.moulberry.flashback.keyframe.types.TimelapseKeyframeType;
+import com.moulberry.flashback.keyframe.types.TrackEntityKeyframeType;
 import com.moulberry.flashback.packet.FlashbackAccurateEntityPosition;
 import com.moulberry.flashback.packet.FlashbackClearParticles;
 import com.moulberry.flashback.packet.FlashbackForceClientTick;
@@ -32,7 +32,6 @@ import com.moulberry.flashback.packet.FlashbackRemoteExperience;
 import com.moulberry.flashback.packet.FlashbackRemoteFoodData;
 import com.moulberry.flashback.packet.FlashbackRemoteSelectHotbarSlot;
 import com.moulberry.flashback.packet.FlashbackRemoteSetSlot;
-import com.moulberry.flashback.packet.FlashbackVoiceChatSound;
 import com.moulberry.flashback.playback.EmptyLevelSource;
 import com.moulberry.flashback.playback.ReplayServer;
 import com.moulberry.flashback.record.FlashbackMeta;
@@ -48,15 +47,6 @@ import com.moulberry.flashback.state.EditorStateManager;
 import com.moulberry.flashback.visuals.AccurateEntityPositionHandler;
 import com.moulberry.flashback.visuals.ShaderManager;
 import com.seibel.distanthorizons.api.DhApi;
-import net.fabricmc.api.ClientModInitializer;
-import net.fabricmc.api.ModInitializer;
-import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
-import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
-import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
-import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
-import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.ChatFormatting;
 import net.minecraft.FileUtil;
 import net.minecraft.Util;
@@ -70,6 +60,7 @@ import net.minecraft.client.player.AbstractClientPlayer;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.commands.Commands;
+import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.*;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
@@ -96,13 +87,23 @@ import org.apache.commons.io.FileUtils;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import net.minecraftforge.client.event.ClientPlayerNetworkEvent;
+import net.minecraftforge.client.event.RegisterClientCommandsEvent;
+import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.event.TickEvent;
+import net.minecraftforge.eventbus.api.SubscribeEvent;
+import net.minecraftforge.fml.common.Mod;
+import net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent;
+import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.DirectoryStream;
 import java.nio.file.FileSystem;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -114,7 +115,8 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
-public class Flashback implements ModInitializer, ClientModInitializer {
+@Mod("flashback")
+public class Flashback {
     public static final Logger LOGGER = LoggerFactory.getLogger("flashback");
 
     public static final int MAGIC = 0xD780E884;
@@ -126,6 +128,7 @@ public class Flashback implements ModInitializer, ClientModInitializer {
     private static int delayedStartRecording = 0;
     private static boolean delayedOpenConfig = false;
     private static volatile boolean isInReplay = false;
+    private String unsupportedLoader;
 
     public static boolean supportsDistantHorizons = false;
 
@@ -137,7 +140,7 @@ public class Flashback implements ModInitializer, ClientModInitializer {
     }
 
     public static Path getDataDirectory() {
-        return FabricLoader.getInstance().getGameDir().resolve("flashback");
+        return LoaderCompat.getGameDir().resolve("flashback");
     }
 
     public static Path getReplayFolder() {
@@ -146,7 +149,7 @@ public class Flashback implements ModInitializer, ClientModInitializer {
 
     public static Path getConfigDirectory() {
         if (configDirectory == null) {
-            configDirectory = FabricLoader.getInstance().getConfigDir().resolve("flashback");
+            configDirectory = LoaderCompat.getConfigDir().resolve("flashback");
             try {
                 Files.createDirectories(configDirectory);
             } catch (Exception e) {
@@ -156,13 +159,133 @@ public class Flashback implements ModInitializer, ClientModInitializer {
         return configDirectory;
     }
 
-    @Override
-    public void onInitialize() {
+    public Flashback() {
+        configureJavaCppCache();
+        configureBundledFFmpegLibraryPath();
+        preloadFFmpegNatives();
+        var modBus = FMLJavaModLoadingContext.get().getModEventBus();
+        modBus.addListener(this::onClientSetup);
+        MinecraftForge.EVENT_BUS.register(this);
+        FlashbackNetwork.register();
     }
 
-    @Override
-	public void onInitializeClient() {
-        Path configFolder = FabricLoader.getInstance().getConfigDir().resolve("flashback");
+    /**
+     * JavaCPP's default cache is shared by every Minecraft profile. On Windows,
+     * a second game process can lock an FFmpeg DLL while another profile tries
+     * to extract over it. Keep the native cache inside this profile instead.
+     */
+    private static void configureJavaCppCache() {
+        if (System.getProperty("org.bytedeco.javacpp.cachedir") != null) {
+            return;
+        }
+
+        Path cacheDirectory = LoaderCompat.getGameDir().resolve("flashback").resolve("native_cache")
+            .toAbsolutePath().normalize();
+        try {
+            Files.createDirectories(cacheDirectory);
+            System.setProperty("org.bytedeco.javacpp.cachedir", cacheDirectory.toString());
+        } catch (IOException exception) {
+            LOGGER.warn("Unable to create the profile-specific FFmpeg native cache", exception);
+        }
+    }
+
+    private static final String[] WINDOWS_FFMPEG_NATIVE_RESOURCES = {
+        "org/bytedeco/javacpp/windows-x86_64/jnijavacpp.dll",
+        "org/bytedeco/ffmpeg/windows-x86_64/avutil-58.dll",
+        "org/bytedeco/ffmpeg/windows-x86_64/jniavutil.dll",
+        "org/bytedeco/ffmpeg/windows-x86_64/swresample-4.dll",
+        "org/bytedeco/ffmpeg/windows-x86_64/jniswresample.dll",
+        "org/bytedeco/ffmpeg/windows-x86_64/avcodec-60.dll",
+        "org/bytedeco/ffmpeg/windows-x86_64/jniavcodec.dll",
+        "org/bytedeco/ffmpeg/windows-x86_64/avformat-60.dll",
+        "org/bytedeco/ffmpeg/windows-x86_64/jniavformat.dll",
+        "org/bytedeco/ffmpeg/windows-x86_64/swscale-7.dll",
+        "org/bytedeco/ffmpeg/windows-x86_64/jniswscale.dll",
+        "org/bytedeco/ffmpeg/windows-x86_64/avfilter-9.dll",
+        "org/bytedeco/ffmpeg/windows-x86_64/jniavfilter.dll",
+        "org/bytedeco/ffmpeg/windows-x86_64/avdevice-60.dll",
+        "org/bytedeco/ffmpeg/windows-x86_64/jniavdevice.dll"
+    };
+
+    /**
+     * Forge exposes nested dependencies through union: URLs. JavaCPP 1.5.10
+     * cannot determine the size of those resources and consequently tries to
+     * extract the same DLL again after Windows has locked it. Extract the
+     * bundled FFmpeg libraries once and make JavaCPP prefer normal file URLs.
+     */
+    private static void configureBundledFFmpegLibraryPath() {
+        String osName = System.getProperty("os.name", "").toLowerCase();
+        String osArch = System.getProperty("os.arch", "").toLowerCase();
+        if (!osName.contains("win") || !(osArch.equals("amd64") || osArch.equals("x86_64"))) {
+            return;
+        }
+
+        Path libraryDirectory = getDataDirectory().resolve("native_cache")
+            .resolve("ffmpeg-6.1.1-1.5.10-windows-x86_64").toAbsolutePath().normalize();
+        try {
+            Files.createDirectories(libraryDirectory);
+            ClassLoader classLoader = Flashback.class.getClassLoader();
+            for (String resource : WINDOWS_FFMPEG_NATIVE_RESOURCES) {
+                String fileName = resource.substring(resource.lastIndexOf('/') + 1);
+                Path destination = libraryDirectory.resolve(fileName);
+                if (Files.isRegularFile(destination) && Files.size(destination) > 0) {
+                    continue;
+                }
+
+                try (InputStream inputStream = classLoader.getResourceAsStream(resource)) {
+                    if (inputStream == null) {
+                        throw new IOException("Missing bundled native library: " + resource);
+                    }
+                    Path temporary = libraryDirectory.resolve(fileName + ".part");
+                    Files.copy(inputStream, temporary, StandardCopyOption.REPLACE_EXISTING);
+                    Files.move(temporary, destination, StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+
+            prependJavaCppPath("org.bytedeco.javacpp.platform.linkpath", libraryDirectory);
+            prependJavaCppPath("org.bytedeco.javacpp.platform.preloadpath", libraryDirectory);
+            System.setProperty("org.bytedeco.javacpp.pathsFirst", "true");
+        } catch (IOException exception) {
+            LOGGER.warn("Unable to prepare bundled FFmpeg native libraries", exception);
+        }
+    }
+
+    private static void prependJavaCppPath(String property, Path path) {
+        String pathString = path.toString();
+        String existing = System.getProperty(property);
+        if (existing == null || existing.isBlank()) {
+            System.setProperty(property, pathString);
+        } else if (!List.of(existing.split(java.io.File.pathSeparator)).contains(pathString)) {
+            System.setProperty(property, pathString + java.io.File.pathSeparator + existing);
+        }
+    }
+
+    /**
+     * Load the FFmpeg JNI libraries in dependency order before generated FFmpeg
+     * classes initialize. On Windows, allowing avformat to initialize first can
+     * make JavaCPP try to overwrite jniavutil.dll after it has already been
+     * loaded by a dependent class, which fails because loaded DLLs are locked.
+     */
+    private static void preloadFFmpegNatives() {
+        try {
+            org.bytedeco.javacpp.Loader.load(org.bytedeco.ffmpeg.global.avutil.class);
+            org.bytedeco.javacpp.Loader.load(org.bytedeco.ffmpeg.global.swresample.class);
+            org.bytedeco.javacpp.Loader.load(org.bytedeco.ffmpeg.global.avcodec.class);
+            org.bytedeco.javacpp.Loader.load(org.bytedeco.ffmpeg.global.avformat.class);
+            org.bytedeco.javacpp.Loader.load(org.bytedeco.ffmpeg.global.swscale.class);
+        } catch (Throwable throwable) {
+            // VideoContainer will retry when the export window is opened and can
+            // still fall back to PNG sequence export if native codecs are absent.
+            LOGGER.warn("Unable to preload FFmpeg native libraries", throwable);
+        }
+    }
+
+    private void onClientSetup(FMLClientSetupEvent event) {
+        event.enqueueWork(this::onInitializeClient);
+    }
+
+	private void onInitializeClient() {
+        Path configFolder = LoaderCompat.getConfigDir().resolve("flashback");
 
         try {
             Files.createDirectories(configFolder);
@@ -215,127 +338,29 @@ public class Flashback implements ModInitializer, ClientModInitializer {
         KeyframeRegistry.register(SpeedKeyframeType.INSTANCE);
         KeyframeRegistry.register(TimelapseKeyframeType.INSTANCE);
         KeyframeRegistry.register(TimeOfDayKeyframeType.INSTANCE);
+        KeyframeRegistry.register(FreezeKeyframeType.INSTANCE);
+        KeyframeRegistry.register(TrackEntityKeyframeType.INSTANCE);
 
-        ClientPlayNetworking.registerGlobalReceiver(FlashbackForceClientTick.TYPE, (payload, localPlayer, context) -> {
-            if (Flashback.isInReplay()) {
-                Minecraft.getInstance().tick();
-            }
-        });
+        // Client commands are registered from RegisterClientCommandsEvent on Forge.
 
-        ClientPlayNetworking.registerGlobalReceiver(FlashbackClearParticles.TYPE, (payload, localPlayer, context) -> {
-            if (Flashback.isInReplay()) {
-                Minecraft.getInstance().particleEngine.clearParticles();
-            }
-        });
+        this.unsupportedLoader = findUnsupportedLoaders();
 
-        ClientPlayNetworking.registerGlobalReceiver(FlashbackInstantlyLerp.TYPE, (payload, localPlayer, context) -> {
-            if (Flashback.isInReplay()) {
-                for (Entity entity : Minecraft.getInstance().level.entitiesForRendering()) {
-                    if (entity instanceof LivingEntity && !entity.isRemoved() && !(entity instanceof LocalPlayer)) {
-                        entity.moveTo(entity.getX(), entity.getY(), entity.getZ(),
-                            entity.getYRot(), entity.getXRot());
-                    }
-                    entity.setOldPosAndRot();
+        if (LoaderCompat.isModLoaded("distanthorizons")) {
+            try {
+                int apiMajorVersion = DhApi.getApiMajorVersion();
+                if (apiMajorVersion >= 4) {
+                    Flashback.LOGGER.info("Distant Horizons detected. Enabling Flashback+Distant Horizons integration");
+                    supportsDistantHorizons = true;
+                    DistantHorizonsSupport.register();
+                } else {
+                    Flashback.LOGGER.error("Distant Horizons is installed, but API version is too low ({}). Disabling integration.", apiMajorVersion);
                 }
+            } catch (Throwable throwable) {
+                Flashback.LOGGER.error("Failed to initialize Distant Horizons integration", throwable);
             }
-        });
-
-        ClientPlayNetworking.registerGlobalReceiver(FlashbackRemoteSelectHotbarSlot.TYPE, (payload, localPlayer, context) -> {
-            if (Flashback.isInReplay()) {
-                Entity entity = Minecraft.getInstance().level.getEntity(payload.entityId());
-                if (entity instanceof Player player) {
-                    player.getInventory().selected = payload.slot();
-                }
-            }
-        });
-
-        ClientPlayNetworking.registerGlobalReceiver(FlashbackRemoteExperience.TYPE, (payload, localPlayer, context) -> {
-            if (Flashback.isInReplay()) {
-                Entity entity = Minecraft.getInstance().level.getEntity(payload.entityId());
-                if (entity instanceof Player player) {
-                    player.experienceProgress = payload.experienceProgress();
-                    player.totalExperience = payload.totalExperience();
-                    player.experienceLevel = payload.experienceLevel();
-                }
-            }
-        });
-
-        ClientPlayNetworking.registerGlobalReceiver(FlashbackRemoteFoodData.TYPE, (payload, localPlayer, context) -> {
-            if (Flashback.isInReplay()) {
-                Entity entity = Minecraft.getInstance().level.getEntity(payload.entityId());
-                if (entity instanceof Player player) {
-                    player.getFoodData().setFoodLevel(payload.foodLevel());
-                    player.getFoodData().setSaturation(payload.saturationLevel());
-                }
-            }
-        });
-
-        ClientPlayNetworking.registerGlobalReceiver(FlashbackRemoteSetSlot.TYPE, (payload, localPlayer, context) -> {
-            if (Flashback.isInReplay()) {
-                Entity entity = Minecraft.getInstance().level.getEntity(payload.entityId());
-                if (entity instanceof Player player) {
-                    player.getInventory().setItem(payload.slot(), payload.itemStack());
-                }
-            }
-        });
-
-        if (FabricLoader.getInstance().isModLoaded("voicechat")) {
-            ClientPlayNetworking.registerGlobalReceiver(FlashbackVoiceChatSound.TYPE, (payload, localPlayer, context) -> {
-                if (Flashback.isInReplay()) {
-                    SimpleVoiceChatPlayback.play(payload);
-                }
-            });
         }
 
-        ClientPlayNetworking.registerGlobalReceiver(FlashbackAccurateEntityPosition.TYPE, (payload, localPlayer, context) -> {
-            if (Flashback.isInReplay()) {
-                AccurateEntityPositionHandler.update(payload);
-            }
-        });
-
-        ShaderManager.INSTANCE.register();
-
-        ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> {
-            var flashback = ClientCommandManager.literal("flashback");
-            flashback.then(ClientCommandManager.literal("start").executes(this::startRecordingReplay));
-            flashback.then(ClientCommandManager.literal("finish").executes(this::finishRecordingReplay));
-            flashback.then(ClientCommandManager.literal("end").executes(this::finishRecordingReplay));
-            flashback.then(ClientCommandManager.literal("config").executes(this::openFlashbackConfig));
-            flashback.then(ClientCommandManager.literal("mark")
-                .executes(command -> {
-                    this.addMarker(command, null, null, null);
-                    return 0;
-                }).then(ClientCommandManager.argument("color", BetterColorArgument.color()).executes(command -> {
-                    int colour = command.getArgument("color", Integer.class);
-                    this.addMarker(command, colour, null, null);
-                    return 0;
-                }).then(ClientCommandManager.argument("savePosition", BoolArgumentType.bool()).executes(command -> {
-                    int colour = command.getArgument("color", Integer.class);
-                    boolean savePosition = command.getArgument("savePosition", Boolean.class);
-                    this.addMarker(command, colour, savePosition, null);
-                    return 0;
-                }).then(ClientCommandManager.argument("description", StringArgumentType.greedyString()).executes(command -> {
-                    int colour = command.getArgument("color", Integer.class);
-                    boolean savePosition = command.getArgument("savePosition", Boolean.class);
-                    String description = command.getArgument("description", String.class);
-                    this.addMarker(command, colour, savePosition, description);
-                    return 0;
-                })))));
-            dispatcher.register(flashback);
-        });
-
-        ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
-            if (!Flashback.isInReplay() && Flashback.getConfig().automaticallyStart && RECORDER == null) {
-                delayedStartRecording = 20;
-            }
-            if (FabricLoader.getInstance().isModLoaded("voicechat")) {
-                SimpleVoiceChatPlayback.cleanUp();
-            }
-        });
-
-        String unsupportedLoader = findUnsupportedLoaders();
-
-        ClientTickEvents.END_CLIENT_TICK.register(minecraft -> {
+        ClientTickHooks.END_CLIENT_TICK.register(minecraft -> {
             updateIsInReplay();
 
             AccurateEntityPositionHandler.tick();
@@ -360,7 +385,7 @@ public class Flashback implements ModInitializer, ClientModInitializer {
             }
         });
 
-        ClientTickEvents.START_CLIENT_TICK.register(minecraft -> {
+        ClientTickHooks.START_CLIENT_TICK.register(minecraft -> {
             if (unsupportedLoader != null &&
                     System.currentTimeMillis() > Flashback.getConfig().nextUnsupportedModLoaderWarning &&
                     canReplaceScreen(Minecraft.getInstance().screen)) {
@@ -438,34 +463,67 @@ public class Flashback implements ModInitializer, ClientModInitializer {
             updateIsInReplay();
         });
 
-        if (FabricLoader.getInstance().isModLoaded("distanthorizons")) {
-            if (DhApi.getApiMajorVersion() >= 4) {
-                Flashback.LOGGER.info("DistantHorizons detected. Enabling Flashback+DistantHorizons integration");
-                supportsDistantHorizons = true;
-                DistantHorizonsSupport.register();
-            } else {
-                Flashback.LOGGER.error("DistantHorizons is installed, but API version is too low ({}). Disabling integration.", DhApi.getApiMajorVersion());
-            }
-        }
-
-        if (FabricLoader.getInstance().isModLoaded("valkyrienskies")) {
-            ValkyrienSkiesSupport.register();
-        }
 	}
+
+    @SubscribeEvent
+    public void onClientTick(TickEvent.ClientTickEvent event) {
+        if (event.phase == TickEvent.Phase.START) {
+            ClientTickHooks.START_CLIENT_TICK.fire(Minecraft.getInstance());
+        } else {
+            ClientTickHooks.END_CLIENT_TICK.fire(Minecraft.getInstance());
+        }
+    }
+
+    @SubscribeEvent
+    public void onClientLogin(ClientPlayerNetworkEvent.LoggingIn event) {
+        if (!Flashback.isInReplay() && Flashback.getConfig().automaticallyStart && RECORDER == null) {
+            delayedStartRecording = 20;
+        }
+    }
+
+    @SubscribeEvent
+    public void registerClientCommands(RegisterClientCommandsEvent event) {
+        var flashback = Commands.literal("flashback");
+        flashback.then(Commands.literal("start").executes(this::startRecordingReplay));
+        flashback.then(Commands.literal("finish").executes(this::finishRecordingReplay));
+        flashback.then(Commands.literal("end").executes(this::finishRecordingReplay));
+        flashback.then(Commands.literal("config").executes(this::openFlashbackConfig));
+        flashback.then(Commands.literal("mark")
+            .executes(command -> {
+                this.addMarker(command, null, null, null);
+                return 0;
+            }).then(Commands.argument("color", BetterColorArgument.color()).executes(command -> {
+                int colour = command.getArgument("color", Integer.class);
+                this.addMarker(command, colour, null, null);
+                return 0;
+            }).then(Commands.argument("savePosition", BoolArgumentType.bool()).executes(command -> {
+                int colour = command.getArgument("color", Integer.class);
+                boolean savePosition = command.getArgument("savePosition", Boolean.class);
+                this.addMarker(command, colour, savePosition, null);
+                return 0;
+            }).then(Commands.argument("description", StringArgumentType.greedyString()).executes(command -> {
+                int colour = command.getArgument("color", Integer.class);
+                boolean savePosition = command.getArgument("savePosition", Boolean.class);
+                String description = command.getArgument("description", String.class);
+                this.addMarker(command, colour, savePosition, description);
+                return 0;
+            })))));
+        event.getDispatcher().register(flashback);
+    }
 
     public static List<String> getReplayIncompatibleMods() {
         List<String> incompatible = new ArrayList<>();
-        if (FabricLoader.getInstance().isModLoaded("vmp")) {
+        if (LoaderCompat.isModLoaded("vmp")) {
             incompatible.add("VeryManyPlayers (vmp)");
         }
-        if (FabricLoader.getInstance().isModLoaded("c2me")) {
+        if (LoaderCompat.isModLoaded("c2me")) {
             incompatible.add("Concurrent Chunk Management Engine (c2me)");
         }
         return incompatible;
     }
 
     private static @Nullable String findUnsupportedLoaders() {
-        if (FabricLoader.getInstance().isModLoaded("feather")) {
+        if (LoaderCompat.isModLoaded("feather")) {
             return "Feather Client";
         } else {
             return null;
@@ -477,9 +535,9 @@ public class Flashback implements ModInitializer, ClientModInitializer {
             || screen instanceof RealmsMainScreen || screen instanceof JoinMultiplayerScreen;
     }
 
-    private void addMarker(CommandContext<FabricClientCommandSource> command, @Nullable Integer colour, @Nullable Boolean savePosition, @Nullable String description) {
+    private void addMarker(CommandContext<CommandSourceStack> command, @Nullable Integer colour, @Nullable Boolean savePosition, @Nullable String description) {
         if (RECORDER == null) {
-            command.getSource().sendError(Component.literal("Not recording"));
+            command.getSource().sendFailure(Component.literal("Not recording"));
             return;
         }
 
@@ -514,7 +572,8 @@ public class Flashback implements ModInitializer, ClientModInitializer {
             }
         }
 
-        command.getSource().sendFeedback(Component.literal(feedback));
+        String feedbackMessage = feedback;
+        command.getSource().sendSuccess(() -> Component.literal(feedbackMessage), false);
         RECORDER.addMarker(new ReplayMarker(colour, position, description));
     }
 
@@ -629,17 +688,17 @@ public class Flashback implements ModInitializer, ClientModInitializer {
         return isInReplay;
     }
 
-    private int startRecordingReplay(CommandContext<FabricClientCommandSource> command) {
+    private int startRecordingReplay(CommandContext<CommandSourceStack> command) {
         startRecordingReplay();
         return 0;
     }
 
-    private int finishRecordingReplay(CommandContext<FabricClientCommandSource> command) {
+    private int finishRecordingReplay(CommandContext<CommandSourceStack> command) {
         finishRecordingReplay();
         return 0;
     }
 
-    private int openFlashbackConfig(CommandContext<FabricClientCommandSource> command) {
+    private int openFlashbackConfig(CommandContext<CommandSourceStack> command) {
         delayedOpenConfig = true;
         return 0;
     }
@@ -651,6 +710,13 @@ public class Flashback implements ModInitializer, ClientModInitializer {
             return;
         }
         RECORDER = new Recorder();
+        if (supportsDistantHorizons) {
+            try {
+                RECORDER.putDistantHorizonsPaths(DistantHorizonsSupport.getDimensionPaths());
+            } catch (Throwable throwable) {
+                Flashback.LOGGER.warn("Unable to capture Distant Horizons save paths when recording started", throwable);
+            }
+        }
         if (Flashback.getConfig().showRecordingToasts) {
             SystemToast.add(Minecraft.getInstance().getToasts(), FlashbackSystemToasts.RECORDING_TOAST,
                     Component.literal("Flashback"), Component.literal("Started recording"));
@@ -772,6 +838,32 @@ public class Flashback implements ModInitializer, ClientModInitializer {
             LevelStorageSource source = new LevelStorageSource(replayTemp.resolve("saves"), replayTemp.resolve("backups"),
                 Minecraft.getInstance().getLevelSource().getWorldDirValidator(), Minecraft.getInstance().getFixerUpper());
             LevelStorageSource.LevelStorageAccess access = source.createAccess("replay");
+
+            // Forge's login handshake (NetworkHooks -> ConfigSync) reads serverconfig/forge-server.toml off
+            // disk on the connection's own Netty thread, racing the server thread that writes the
+            // corrected defaults into that same file during initServer(). For a real world save that file
+            // already has valid content from a previous session, so the race never matters; for our
+            // brand-new temp folder an empty/missing file needs correcting, and losing the race throws a
+            // NoSuchFileException that Forge turns into a client disconnect. Writing the fully-corrected
+            // defaults up front (matching what ForgeConfigSpec would otherwise fill in) means there's
+            // nothing left to correct, so no write-back race can happen.
+            Path serverConfigDir = replayTemp.resolve("saves").resolve("replay").resolve("serverconfig");
+            Files.createDirectories(serverConfigDir);
+            Path serverConfigFile = serverConfigDir.resolve("forge-server.toml");
+            if (!Files.exists(serverConfigFile)) {
+                Files.writeString(serverConfigFile, """
+                    [server]
+                        removeErroringBlockEntities = false
+                        removeErroringEntities = false
+                        fullBoundingBoxLadders = false
+                        zombieBaseSummonChance = 0.1
+                        zombieBabyChance = 0.05
+                        permissionHandler = "forge:default_handler"
+                        advertiseDedicatedServerToLan = true
+                        useItemWithDurationZero = false
+                    """);
+            }
+
             PackRepository packRepository = ServerPacksSource.createPackRepository(access);
 
             packRepository.reload();

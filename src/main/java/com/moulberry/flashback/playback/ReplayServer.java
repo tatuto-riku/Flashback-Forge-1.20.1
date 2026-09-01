@@ -4,8 +4,8 @@ import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.mojang.authlib.GameProfile;
 import com.moulberry.flashback.Flashback;
+import com.moulberry.flashback.ServerPlayNetworking;
 import com.moulberry.flashback.SneakyThrow;
-import com.moulberry.flashback.compat.valkyrienskies.ValkyrienSkiesSupport;
 import com.moulberry.flashback.ext.LevelChunkExt;
 import com.moulberry.flashback.TempFolderProvider;
 import com.moulberry.flashback.keyframe.handler.ReplayServerKeyframeHandler;
@@ -25,10 +25,7 @@ import com.moulberry.flashback.packet.FinishedServerTick;
 import com.moulberry.flashback.record.FlashbackChunkMeta;
 import com.moulberry.flashback.record.FlashbackMeta;
 import com.moulberry.flashback.record.Recorder;
-import com.simibubi.create.CreateClient;
 import net.minecraft.resources.ResourceLocation;
-import org.valkyrienskies.mod.common.IShipObjectWorldServerProvider;
-import org.valkyrienskies.mod.common.ValkyrienSkiesMod;
 import io.netty.buffer.Unpooled;
 import io.netty.handler.codec.DecoderException;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
@@ -36,9 +33,6 @@ import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.ints.IntIterator;
 import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
 import it.unimi.dsi.fastutil.ints.IntSet;
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
-import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
-import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.CrashReport;
 import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
@@ -107,6 +101,10 @@ public class ReplayServer extends IntegratedServer {
     public AtomicBoolean sendFinishedServerTick = new AtomicBoolean(false);
     private volatile float desiredTickRate = 20.0f;
     private volatile float desiredTickRateManual = 20.0f;
+    private volatile boolean desiredFrozen = false;
+    private volatile int desiredFrozenDelay = -1;
+    private volatile boolean isFrozen = false;
+    private volatile int frozenDelay = -1;
 
     private int currentTick = 0;
     private volatile int targetTick = 0;
@@ -389,6 +387,11 @@ public class ReplayServer extends IntegratedServer {
         }
     }
 
+    public void setFrozen(boolean frozen, int delay) {
+        this.desiredFrozen = frozen;
+        this.desiredFrozenDelay = delay;
+    }
+
     public int getReplayTick() {
         return this.targetTick;
     }
@@ -560,7 +563,7 @@ public class ReplayServer extends IntegratedServer {
     }
 
     public void handleAccuratePlayerPosition(FriendlyByteBuf friendlyByteBuf) {
-        var packet = FlashbackAccurateEntityPosition.TYPE.read(friendlyByteBuf);
+        var packet = FlashbackAccurateEntityPosition.decode(friendlyByteBuf);
 
         for (ReplayPlayer replayViewer : this.replayViewers) {
             ServerPlayNetworking.send(replayViewer, packet);
@@ -705,27 +708,28 @@ public class ReplayServer extends IntegratedServer {
     @Override
     protected void runServer() {
         try {
-            ServerLifecycleEvents.SERVER_STARTING.invoker().onServerStarting(this);
-            if (FabricLoader.getInstance().isModLoaded("valkyrienskies")) {
-                ValkyrienSkiesMod.setCurrentServer(this);
-            }
             if (!this.initServer()) {
                 throw new IllegalStateException("Failed to initialize server");
             }
 
-            this.nextTickTimeNanos = Util.getMillis();
+            net.minecraftforge.server.ServerLifecycleHooks.handleServerStarted(this);
+
+            // Must be nanoseconds: everything below (and lastTickTimeNanos, which drives
+            // getPartialReplayTick/getPartialServerTick) is compared against Util.getNanos()
+            this.nextTickTimeNanos = Util.getNanos();
             this.nextTickTime = this.nextTickTimeNanos / 1000000;
             this.statusIcon = (ServerStatus.Favicon)this.loadStatusIcon().orElse(null);
-            ServerLifecycleEvents.SERVER_STARTED.invoker().onServerStarted(this);
             this.status = this.buildServerStatus();
 
             while (this.running) {
                 long nst = this.tickRateManager.nanosecondsPerTick();
-                long l = Util.getNanos() - this.nextTickTimeNanos;
-                if (l > 1000 * 1000 * 1000 + 20L * l && this.nextTickTime - this.lastOverloadWarning >= 10 * 1000 + 100L * l) {
-                    long m = l / nst;
-                    Flashback.LOGGER.warn("Can't keep up! Is the server overloaded? Running {}ms or {} ticks behind", (Object)(m / TimeUtil.NANOSECONDS_PER_MILLISECOND), (Object)m);
-                    this.nextTickTimeNanos += m * nst;
+                long behindNanos = Util.getNanos() - this.nextTickTimeNanos;
+                if (behindNanos > TimeUtil.NANOSECONDS_PER_SECOND + 20L * nst
+                        && this.nextTickTime - this.lastOverloadWarning >= 10 * 1000 + 100L * nst / 1000000) {
+                    long behindTicks = behindNanos / nst;
+                    Flashback.LOGGER.warn("Can't keep up! Is the server overloaded? Running {}ms or {} ticks behind",
+                        behindTicks * nst / TimeUtil.NANOSECONDS_PER_MILLISECOND, behindTicks);
+                    this.nextTickTimeNanos += behindTicks * nst;
                     this.nextTickTime = this.nextTickTimeNanos / 1000000;
                     this.lastOverloadWarning = this.nextTickTime;
                 }
@@ -750,6 +754,8 @@ public class ReplayServer extends IntegratedServer {
                 this.isReady = true;
                 JvmProfiler.INSTANCE.onServerTick(this.averageTickTime);
             }
+            net.minecraftforge.server.ServerLifecycleHooks.handleServerStopping(this);
+            net.minecraftforge.server.ServerLifecycleHooks.expectServerStopped();
         } catch (Throwable var44) {
             Flashback.LOGGER.error("Encountered an unexpected exception", var44);
             CrashReport crashReport = constructOrExtractCrashReport(var44);
@@ -761,6 +767,7 @@ public class ReplayServer extends IntegratedServer {
                 Flashback.LOGGER.error("We were unable to save this crash report to disk.");
             }
 
+            net.minecraftforge.server.ServerLifecycleHooks.expectServerStopped();
             this.onServerCrash(crashReport);
         } finally {
             try {
@@ -769,6 +776,7 @@ public class ReplayServer extends IntegratedServer {
             } catch (Throwable var42) {
                 Flashback.LOGGER.error("Exception stopping the server", var42);
             } finally {
+                net.minecraftforge.server.ServerLifecycleHooks.handleServerStopped(this);
                 if (this.services.profileCache() != null) {
                     this.services.profileCache().clearExecutor();
                 }
@@ -786,6 +794,7 @@ public class ReplayServer extends IntegratedServer {
             // Play initial snapshot
             ReplayReader replayReader = this.playableChunksByStart.get(0).getOrLoadReplayReader();
             replayReader.handleSnapshot(this);
+            this.gamePacketHandler.flushPendingEntities();
         }
 
 //        this.accurateEntityPositions = this.pendingAccurateEntityPositions;
@@ -978,7 +987,18 @@ public class ReplayServer extends IntegratedServer {
     private void runUpdates(BooleanSupplier booleanSupplier, boolean forceApplyKeyframes) {
         if (!this.replayPaused || forceApplyKeyframes) {
             this.desiredTickRate = 20.0f;
+            this.desiredFrozen = false;
             this.getEditorState().applyKeyframes(new ReplayServerKeyframeHandler(this), this.targetTick);
+        }
+
+        if (this.desiredFrozen && this.frozenDelay < 0) {
+            if (this.desiredFrozenDelay <= 0) {
+                this.frozenDelay = 1;
+            } else if (this.desiredFrozenDelay <= 5) {
+                this.frozenDelay = 2;
+            } else {
+                this.frozenDelay = 3;
+            }
         }
 
         float tickRate = this.desiredTickRate;
@@ -986,14 +1006,32 @@ public class ReplayServer extends IntegratedServer {
             tickRate *= this.desiredTickRateManual / 20f;
         }
 
+        if (this.desiredFrozen) {
+            if (this.frozenDelay > 0) {
+                this.frozenDelay--;
+            }
+            if (this.frozenDelay == 0) {
+                this.isFrozen = true;
+            }
+        } else {
+            this.frozenDelay = -1;
+            this.isFrozen = false;
+        }
+
         // Update tick rate & frozen state
         if (this.tickRateManager.tickrate() != tickRate) {
             TickRateManager.setTickRate(tickRate);
         }
+        if (this.tickRateManager.isFrozen() != this.isFrozen) {
+            TickRateManager.setFrozen(this.isFrozen);
+        }
 
         boolean tickChanged = this.targetTick != this.currentTick;
-
-        this.handleActions();
+        if (this.isFrozen && this.targetTick >= this.currentTick) {
+            tickChanged = false;
+        } else {
+            this.handleActions();
+        }
 
         // Add tickets for keeping entities loaded
         for (ServerLevel level : this.getAllLevels()) {
@@ -1008,7 +1046,7 @@ public class ReplayServer extends IntegratedServer {
         super.tickServer(booleanSupplier);
 
         // Teleport entities
-        if (!this.needsPositionUpdate.isEmpty()) {
+        if (!this.isFrozen && !this.needsPositionUpdate.isEmpty()) {
             for (Map.Entry<ResourceKey<Level>, IntSet> entry : this.needsPositionUpdate.entrySet()) {
                 ResourceKey<Level> dimension = entry.getKey();
                 IntSet entities = entry.getValue();
@@ -1125,14 +1163,8 @@ public class ReplayServer extends IntegratedServer {
         }
 
         if (shouldJump) {
-            this.processedSnapshot = true;
-
-            this.clearDataForPlayingSnapshot();
-
             Map.Entry<Integer, PlayableChunk> entry = this.playableChunksByStart.floorEntry(this.targetTick);
-            ReplayReader replayReader = entry.getValue().getOrLoadReplayReader();
-            replayReader.handleSnapshot(this);
-            entry.getValue().getOrLoadReplayReader().resetToStart();
+            this.playSnapshot(entry.getValue().getOrLoadReplayReader());
             this.currentTick = entry.getKey();
         }
 
@@ -1146,9 +1178,7 @@ public class ReplayServer extends IntegratedServer {
             this.currentReplayReader.resetToStart();
 
             if (!this.processedSnapshot && entry.getValue().chunkMeta.forcePlaySnapshot) {
-                this.processedSnapshot = true;
-                this.clearDataForPlayingSnapshot();
-                this.currentReplayReader.handleSnapshot(this);
+                this.playSnapshot(this.currentReplayReader);
             }
         }
 
@@ -1174,9 +1204,7 @@ public class ReplayServer extends IntegratedServer {
                 this.currentReplayReader.resetToStart();
 
                 if (entry.getValue().chunkMeta.forcePlaySnapshot) {
-                    this.processedSnapshot = true;
-                    this.clearDataForPlayingSnapshot();
-                    this.currentReplayReader.handleSnapshot(this);
+                    this.playSnapshot(this.currentReplayReader);
                 }
             }
 
@@ -1200,13 +1228,19 @@ public class ReplayServer extends IntegratedServer {
         }
         this.bossEvents.clear();
 
-        if (FabricLoader.getInstance().isModLoaded("valkyrienskies")) {
-            var world = ((IShipObjectWorldServerProvider) this).getShipObjectWorld();
-            ValkyrienSkiesSupport.clearDataForPlayingSnapshot(world);
-        }
-        if (FabricLoader.getInstance().isModLoaded("create")) {
-            Minecraft.getInstance().submit(CreateClient::invalidateRenderers);
-        }
+    }
+
+    private void playSnapshot(ReplayReader replayReader) {
+        this.processedSnapshot = true;
+        this.clearDataForPlayingSnapshot();
+        replayReader.handleSnapshot(this);
+
+        // Snapshot actions queue up entity spawns instead of adding them to the level directly.
+        // They have to be flushed before the reader rewinds, otherwise everything that runs this
+        // tick (tryFollowLocalPlayer, spectating) can't see the entities yet.
+        this.gamePacketHandler.flushPendingEntities();
+
+        replayReader.resetToStart();
     }
 
     private void tryFollowLocalPlayer() {
@@ -1220,7 +1254,14 @@ public class ReplayServer extends IntegratedServer {
         }
 
         Entity follow = currentLevel.getEntity(this.gamePacketHandler.localPlayerId);
+
+        // While switching dimensions the recorded player is temporarily teleported to (0, 0, 0)
+        // (see ReplayGamePacketHandler#ensureWorldCreated). Following it there would bury the
+        // replay viewer under the world, so wait until it has an actual position.
         if (follow == null) {
+            return;
+        }
+        if (follow.getX() == 0.0 && follow.getY() == 0.0 && follow.getZ() == 0.0) {
             return;
         }
 
@@ -1287,10 +1328,19 @@ public class ReplayServer extends IntegratedServer {
 
     public void clearReplayTempFolder() {
         Path temp = TempFolderProvider.createTemp(TempFolderProvider.TempFolderType.SERVER, this.playbackUUID);
+        Path serverConfigDir = temp.resolve("saves").resolve("replay").resolve("serverconfig");
 
-        // Delete all files, but not directories
+        // Delete all files, but not directories, and don't touch serverconfig: Forge's login handshake
+        // reads forge-server.toml from there on a different thread than this one, and deleting it here
+        // (even to recreate it moments later) can race that read into a NoSuchFileException that gets a
+        // real spectator disconnected before they ever see the replay.
         try {
             Files.walkFileTree(temp, new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                    return dir.equals(serverConfigDir) ? FileVisitResult.SKIP_SUBTREE : FileVisitResult.CONTINUE;
+                }
+
                 @Override
                 public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
                 if (!Files.isDirectory(file)) {

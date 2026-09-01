@@ -1,18 +1,15 @@
 package com.moulberry.flashback.compat;
 
-import net.fabricmc.loader.api.FabricLoader;
-import net.irisshaders.iris.Iris;
-import net.irisshaders.iris.api.v0.IrisApi;
-import org.jetbrains.annotations.Nullable;
+import com.moulberry.flashback.LoaderCompat;
 
 public class IrisApiWrapper {
 
     public static boolean isIrisAvailable() {
-        return FabricLoader.getInstance().isModLoaded("iris");
+        return LoaderCompat.isModLoaded("oculus");
     }
 
     public static boolean isShaderPackInUse() {
-        return IrisApi.getInstance().isShaderPackInUse();
+        return isIrisAvailable();
     }
 
 }

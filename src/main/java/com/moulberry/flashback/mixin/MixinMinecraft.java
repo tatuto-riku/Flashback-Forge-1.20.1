@@ -275,9 +275,10 @@ public abstract class MixinMinecraft implements MinecraftExt {
         }
 
         if (Flashback.EXPORT_JOB != null && !ReplayUI.isActive()) {
+            ExportJob exportJob = Flashback.EXPORT_JOB;
             try {
                 PerfectFrames.enable();
-                Flashback.EXPORT_JOB.run();
+                exportJob.run();
             } finally {
                 PerfectFrames.disable();
                 Flashback.EXPORT_JOB = null;
@@ -296,8 +297,18 @@ public abstract class MixinMinecraft implements MinecraftExt {
             int localPlayerTicks = localPlayerTimer.advanceTime(Util.getMillis());
             if (this.level != null && this.player != null && !this.player.isPassenger() && !this.player.isRemoved()) {
                 localPlayerTicks = Math.min(10, localPlayerTicks);
-                for (int j = 0; j < localPlayerTicks; j++) {
-                    this.level.guardEntityTick(this.level::tickNonPassenger, this.player);
+
+                // The local player is always frozen during a replay so that ClientLevel#tickEntities
+                // doesn't tick it. We tick it here instead, which lets the camera move at a constant
+                // 20 TPS regardless of the replay tick rate.
+                TickRateManager manager = replayTimer.manager;
+                manager.setManualLocalPlayerTick(true);
+                try {
+                    for (int j = 0; j < localPlayerTicks; j++) {
+                        this.level.guardEntityTick(this.level::tickNonPassenger, this.player);
+                    }
+                } finally {
+                    manager.setManualLocalPlayerTick(false);
                 }
             }
         }

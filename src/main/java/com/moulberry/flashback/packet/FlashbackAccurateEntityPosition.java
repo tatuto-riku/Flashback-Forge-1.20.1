@@ -1,16 +1,13 @@
 package com.moulberry.flashback.packet;
 
-import com.moulberry.flashback.Flashback;
 import com.moulberry.flashback.action.PositionAndAngle;
-import net.fabricmc.fabric.api.networking.v1.FabricPacket;
-import net.fabricmc.fabric.api.networking.v1.PacketType;
 import net.minecraft.network.FriendlyByteBuf;
 
 import java.util.ArrayList;
 import java.util.List;
 
-public record FlashbackAccurateEntityPosition(int entityId, List<PositionAndAngle> positionAndAngles) implements FabricPacket {
-    public static final PacketType<FlashbackAccurateEntityPosition> TYPE = PacketType.create(Flashback.createResourceLocation("accurate_entity_position"), friendlyByteBuf -> {
+public record FlashbackAccurateEntityPosition(int entityId, List<PositionAndAngle> positionAndAngles) implements FlashbackPacket {
+    public static FlashbackAccurateEntityPosition decode(FriendlyByteBuf friendlyByteBuf) {
         int entityId = friendlyByteBuf.readVarInt();
         int interpolatedCount = friendlyByteBuf.readVarInt();
 
@@ -26,7 +23,7 @@ public record FlashbackAccurateEntityPosition(int entityId, List<PositionAndAngl
         }
 
         return new FlashbackAccurateEntityPosition(entityId, interpolatedPositions);
-    });
+    }
 
     @Override
     public void write(FriendlyByteBuf friendlyByteBuf) {
@@ -39,11 +36,6 @@ public record FlashbackAccurateEntityPosition(int entityId, List<PositionAndAngl
             friendlyByteBuf.writeFloat(interpolatedPosition.yaw());
             friendlyByteBuf.writeFloat(interpolatedPosition.pitch());
         }
-    }
-
-    @Override
-    public PacketType<?> getType() {
-        return TYPE;
     }
 
 }

@@ -4,10 +4,14 @@ import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.platform.TextureUtil;
 import com.mojang.blaze3d.platform.Window;
 import com.moulberry.flashback.Flashback;
+import com.moulberry.flashback.LoaderCompat;
+import com.moulberry.flashback.configuration.FlashbackConfig;
+import com.moulberry.flashback.editor.ui.windows.ExportDoneWindow;
 import com.moulberry.flashback.editor.ui.windows.ExportQueueWindow;
 import com.moulberry.flashback.editor.ui.windows.ExportScreenshotWindow;
 import com.moulberry.flashback.editor.ui.windows.MovementWindow;
 import com.moulberry.flashback.editor.ui.windows.PlayerListWindow;
+import com.moulberry.flashback.editor.ui.windows.RenderFilterWindow;
 import com.moulberry.flashback.editor.ui.windows.PreferencesWindow;
 import com.moulberry.flashback.editor.ui.windows.SelectedEntityPopup;
 import com.moulberry.flashback.state.EditorState;
@@ -22,7 +26,6 @@ import imgui.flag.*;
 import imgui.internal.ImGuiContext;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.ints.IntList;
-import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.ProgressScreen;
 import net.minecraft.client.gui.screens.ReceivingLevelScreen;
@@ -47,6 +50,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Predicate;
@@ -101,6 +105,9 @@ public class ReplayUI {
     private static UUID selectedEntity = null;
     private static boolean openSelectedEntityPopup = false;
 
+    private static int displayingTip = -1;
+    private static boolean dontShowTipsOnStartupCheckbox = false;
+
     public static void init() {
         if (initialized) {
             throw new IllegalStateException("ReplayUI initialized twice");
@@ -131,7 +138,7 @@ public class ReplayUI {
         imGuiContext = new ImGuiContext(ImGui.createContext().ptr);
         ImGui.setCurrentContext(imGuiContext);
 
-        Path relativePath = FabricLoader.getInstance().getGameDir().relativize(path);
+        Path relativePath = LoaderCompat.getGameDir().relativize(path);
         ImGui.getIO().setIniFilename(relativePath.toString());
 
         // ImGui.getIO().addConfigFlags(ImGuiConfigFlags.NavEnableKeyboard);
@@ -143,7 +150,7 @@ public class ReplayUI {
         imguiGl3.init("#version 150");
 
         contentScale = imguiGlfw.contentScale;
-        initFonts(languageCode);
+        initFonts(Minecraft.getInstance().getLanguageManager().getSelected());
 
         ReplayUIDefaults.applyStyle(ImGui.getStyle());
 
@@ -372,13 +379,15 @@ public class ReplayUI {
             return false;
         }
 
-        if (Minecraft.getInstance().options.hideGui) {
+        boolean showingFinishedExport = ExportDoneWindow.isDone();
+
+        if (Minecraft.getInstance().options.hideGui && !showingFinishedExport) {
             return false;
         }
 
         MultiPlayerGameMode gameMode = Minecraft.getInstance().gameMode;
         if (gameMode == null) return false;
-        if (gameMode.getPlayerMode() != GameType.SPECTATOR) return false;
+        if (gameMode.getPlayerMode() != GameType.SPECTATOR && !showingFinishedExport) return false;
         if (Minecraft.getInstance().level == null) return false;
         if (Minecraft.getInstance().player == null) return false;
         if (Minecraft.getInstance().getOverlay() != null) return false;
@@ -517,6 +526,11 @@ public class ReplayUI {
                     initFonts(languageCode);
                 }
             }
+        }
+
+        String selectedLanguage = Minecraft.getInstance().getLanguageManager().getSelected();
+        if (!selectedLanguage.equals(languageCode)) {
+            initFonts(selectedLanguage);
         }
 
         imguiGlfw.newFrame();
@@ -743,8 +757,11 @@ public class ReplayUI {
         ExportScreenshotWindow.render();
         PreferencesWindow.render();
         ExportQueueWindow.render();
+        ExportDoneWindow.render();
         PlayerListWindow.render();
         MovementWindow.render();
+        RenderFilterWindow.render();
+        renderTipOfTheDay();
 
         popupOpenLastFrame = ImGui.isPopupOpen("", ImGuiPopupFlags.AnyPopup);
 
@@ -771,6 +788,89 @@ public class ReplayUI {
         }
 
         transitionActiveState(true);
+    }
+
+    private static void renderTipOfTheDay() {
+        if (displayingTip == -1) {
+            FlashbackConfig config = Flashback.getConfig();
+            if (!config.showTipOfTheDay) {
+                displayingTip = 0;
+            } else {
+                long currentTime = System.currentTimeMillis();
+                if (currentTime >= config.nextTipOfTheDay - TimeUnit.DAYS.toMillis(2) && currentTime <= config.nextTipOfTheDay) {
+                    displayingTip = 0;
+                } else {
+                    displayingTip = Integer.numberOfTrailingZeros(~config.viewedTipsOfTheDay) + 1;
+                    config.viewedTipsOfTheDay = config.viewedTipsOfTheDay | (1 << (displayingTip - 1));
+                    config.nextTipOfTheDay = currentTime + TimeUnit.DAYS.toMillis(1);
+                    config.saveToDefaultFolder();
+                }
+                if (displayingTip > 0) {
+                    ImGui.openPopup("Tip of the day###TipOfTheDay");
+                }
+            }
+        } else if (displayingTip > 0) {
+            int tip = displayingTip - 1;
+            if (tip >= DailyTips.TIPS.length) {
+                displayingTip = 0;
+            } else {
+                // A real modal popup (not a plain window) so it's recognized by the same
+                // ImGui.isPopupOpen(AnyPopup) checks that gate viewport/camera input elsewhere in this
+                // file - a plain floating window sitting on top of the viewport would eat its hover/focus
+                // without those checks realizing input is blocked, leaving the camera unable to move.
+                if (ImGuiHelper.beginPopupModalCloseable("Tip of the day###TipOfTheDay", ImGuiWindowFlags.AlwaysAutoResize)) {
+                    ImGui.pushTextWrapPos(375);
+                    ImGui.textUnformatted(DailyTips.TIPS[tip]);
+                    ImGui.popTextWrapPos();
+
+                    if (ImGui.checkbox("Don't show tips on startup", dontShowTipsOnStartupCheckbox)) {
+                        dontShowTipsOnStartupCheckbox = !dontShowTipsOnStartupCheckbox;
+                    }
+
+                    if (ImGui.button("Close")) {
+                        if (dontShowTipsOnStartupCheckbox) {
+                            FlashbackConfig config = Flashback.getConfig();
+                            config.showTipOfTheDay = false;
+                            config.saveToDefaultFolder();
+                        }
+                        displayingTip = 0;
+                        ImGui.closeCurrentPopup();
+                    }
+
+                    ImGui.sameLine();
+                    boolean canShowPrev = displayingTip > 1;
+                    if (!canShowPrev) {
+                        ImGui.beginDisabled();
+                    }
+                    if (ImGui.button("Back") && canShowPrev) {
+                        FlashbackConfig config = Flashback.getConfig();
+                        displayingTip--;
+                        config.viewedTipsOfTheDay = config.viewedTipsOfTheDay | (1 << (displayingTip - 1));
+                        config.saveToDefaultFolder();
+                    }
+                    if (!canShowPrev) {
+                        ImGui.endDisabled();
+                    }
+
+                    ImGui.sameLine();
+                    boolean canShowNext = displayingTip < DailyTips.TIPS.length;
+                    if (!canShowNext) {
+                        ImGui.beginDisabled();
+                    }
+                    if (ImGui.button("Next") && canShowNext) {
+                        FlashbackConfig config = Flashback.getConfig();
+                        displayingTip++;
+                        config.viewedTipsOfTheDay = config.viewedTipsOfTheDay | (1 << (displayingTip - 1));
+                        config.saveToDefaultFolder();
+                    }
+                    if (!canShowNext) {
+                        ImGui.endDisabled();
+                    }
+
+                    ImGuiHelper.endPopupModalCloseable();
+                }
+            }
+        }
     }
 
     public static boolean isMainFrameActive() {

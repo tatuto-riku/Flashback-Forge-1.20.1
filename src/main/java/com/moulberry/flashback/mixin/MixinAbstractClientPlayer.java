@@ -1,6 +1,7 @@
 package com.moulberry.flashback.mixin;
 
 import com.mojang.authlib.GameProfile;
+import com.moulberry.flashback.FilePlayerSkin;
 import com.moulberry.flashback.state.EditorState;
 import com.moulberry.flashback.state.EditorStateManager;
 import net.minecraft.client.multiplayer.PlayerInfo;
@@ -29,12 +30,29 @@ public abstract class MixinAbstractClientPlayer extends Player {
     public void getSkinTextureLocation(CallbackInfoReturnable<ResourceLocation> cir) {
         EditorState editorState = EditorStateManager.getCurrent();
         if (editorState != null) {
+            FilePlayerSkin filePlayerSkin = editorState.skinOverrideFromFile.get(this.uuid);
+            if (filePlayerSkin != null) {
+                cir.setReturnValue(filePlayerSkin.getSkinTextureLocation());
+                return;
+            }
+
             GameProfile skinOverride = editorState.skinOverride.get(this.uuid);
             if (skinOverride != null) {
                 if (skinOverridePlayerInfo == null || skinOverridePlayerInfo.getProfile() != skinOverride) {
                     skinOverridePlayerInfo = new PlayerInfo(skinOverride, false);
                 }
                 cir.setReturnValue(skinOverridePlayerInfo.getSkinLocation());
+            }
+        }
+    }
+
+    @Inject(method = "getModelName", at = @At("HEAD"), cancellable = true, require = 0)
+    public void getModelName(CallbackInfoReturnable<String> cir) {
+        EditorState editorState = EditorStateManager.getCurrent();
+        if (editorState != null) {
+            FilePlayerSkin filePlayerSkin = editorState.skinOverrideFromFile.get(this.uuid);
+            if (filePlayerSkin != null) {
+                cir.setReturnValue(filePlayerSkin.isSlim() ? "slim" : "default");
             }
         }
     }

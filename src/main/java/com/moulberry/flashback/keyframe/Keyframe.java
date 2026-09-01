@@ -7,7 +7,9 @@ import com.moulberry.flashback.keyframe.impl.CameraKeyframe;
 import com.moulberry.flashback.keyframe.impl.CameraOrbitKeyframe;
 import com.moulberry.flashback.keyframe.impl.CameraShakeKeyframe;
 import com.moulberry.flashback.keyframe.impl.FOVKeyframe;
+import com.moulberry.flashback.keyframe.impl.FreezeKeyframe;
 import com.moulberry.flashback.keyframe.impl.TickrateKeyframe;
+import com.moulberry.flashback.keyframe.impl.TrackEntityKeyframe;
 import com.moulberry.flashback.keyframe.impl.TimeOfDayKeyframe;
 import com.moulberry.flashback.keyframe.impl.TimelapseKeyframe;
 import com.moulberry.flashback.keyframe.interpolation.InterpolationType;
@@ -55,6 +57,8 @@ public abstract class Keyframe {
                 case "timelapse" -> context.deserialize(json, TimelapseKeyframe.class);
                 case "time" -> context.deserialize(json, TimeOfDayKeyframe.class);
                 case "camera_shake" -> context.deserialize(json, CameraShakeKeyframe.class);
+                case "freeze" -> context.deserialize(json, FreezeKeyframe.class);
+                case "track_entity" -> context.deserialize(json, TrackEntityKeyframe.class);
                 default -> throw new IllegalStateException("Unknown keyframe type: " + type);
             };
             keyframe.interpolationType(context.deserialize(jsonObject.get("interpolation_type"), InterpolationType.class));
@@ -82,6 +86,12 @@ public abstract class Keyframe {
             } else if (src instanceof CameraShakeKeyframe cameraShakeKeyframe) {
                 jsonObject = (JsonObject) context.serialize(cameraShakeKeyframe);
                 jsonObject.addProperty("type", "camera_shake");
+            } else if (src instanceof FreezeKeyframe freezeKeyframe) {
+                jsonObject = (JsonObject) context.serialize(freezeKeyframe);
+                jsonObject.addProperty("type", "freeze");
+            } else if (src instanceof TrackEntityKeyframe trackEntityKeyframe) {
+                jsonObject = (JsonObject) context.serialize(trackEntityKeyframe);
+                jsonObject.addProperty("type", "track_entity");
             } else {
                 throw new IllegalStateException("Unknown keyframe type: " + src.getClass());
             }
