@@ -4,7 +4,7 @@ import com.llamalad7.mixinextras.injector.v2.WrapWithCondition;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.moulberry.flashback.Flashback;
-import com.moulberry.flashback.ext.MinecraftExt;
+import com.moulberry.flashback.playback.ReplayClientTick;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
@@ -28,7 +28,7 @@ public class MixinLevel {
     @Inject(method="tickBlockEntities", at=@At("HEAD"))
     public void tickBlockEntities(CallbackInfo ci) {
         if (isClientSide && Flashback.isInReplay()) {
-            runsNormally = ((MinecraftExt) Minecraft.getInstance()).flashback$getReplayTimer().manager.runsNormally();
+            runsNormally = ReplayClientTick.runsNormally(Minecraft.getInstance());
         } else {
             runsNormally = true;
         }

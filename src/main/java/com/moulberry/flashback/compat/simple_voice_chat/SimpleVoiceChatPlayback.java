@@ -3,6 +3,7 @@ package com.moulberry.flashback.compat.simple_voice_chat;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.moulberry.flashback.Flashback;
+import com.moulberry.flashback.editor.ui.ReplayUI;
 import com.moulberry.flashback.packet.FlashbackVoiceChatSound;
 import com.moulberry.flashback.state.EditorState;
 import com.moulberry.flashback.state.EditorStateManager;
@@ -22,6 +23,8 @@ public class SimpleVoiceChatPlayback {
     private static final Cache<UUID, ClientStaticAudioChannel> staticAudioChannelCache = CacheBuilder.newBuilder().expireAfterAccess(Duration.ofMinutes(1)).build();
     private static final Cache<UUID, ClientLocationalAudioChannel> locationAudioChannelCache = CacheBuilder.newBuilder().expireAfterAccess(Duration.ofMinutes(1)).build();
     private static final Cache<UUID, ClientEntityAudioChannel> entityAudioChannelCache = CacheBuilder.newBuilder().expireAfterAccess(Duration.ofMinutes(1)).build();
+    private static final int ERROR_LOG_LIMIT = 8;
+    private static int errorLogCount;
 
     public static void play(FlashbackVoiceChatSound sound) {
         try {
@@ -56,17 +59,29 @@ public class SimpleVoiceChatPlayback {
 
             ClientVoicechat client = ClientManager.getClient();
             if (client != null) {
-                client.getTalkCache().updateTalking(sound.source(), whispering);
+                // 2.6.x keeps the talking indicator and audio level in one cache update.
+                client.getTalkCache().updateLevel(sound.source(), null, whispering, sound.samples());
             }
-        } catch (Exception e) {
-            Flashback.LOGGER.error("Error while trying to play voice chat sound", e);
+        } catch (NoSuchMethodError | Exception e) {
+            ReplayUI.setInfoOverlay("Unable to play Simple Voice Chat audio. Check that Simple Voice Chat is up to date.");
+            if (errorLogCount < ERROR_LOG_LIMIT) {
+                Flashback.LOGGER.error("Error while trying to play voice chat sound", e);
+                errorLogCount++;
+                if (errorLogCount == ERROR_LOG_LIMIT) {
+                    Flashback.LOGGER.error("Stopping repeated Simple Voice Chat playback error logs");
+                }
+            }
         }
     }
 
     public static void cleanUp() {
+        staticAudioChannelCache.invalidateAll();
+        locationAudioChannelCache.invalidateAll();
+        entityAudioChannelCache.invalidateAll();
         staticAudioChannelCache.cleanUp();
         locationAudioChannelCache.cleanUp();
         entityAudioChannelCache.cleanUp();
+        errorLogCount = 0;
     }
 
 }

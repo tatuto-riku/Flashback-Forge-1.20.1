@@ -19,7 +19,7 @@ Copyright 2024 Moulberry. Do not reupload or redistribute without permission fro
 - Timeline-based camera and visual editing
 - MP4 and other FFmpeg-backed video exports
 - Backported editor features and UI behavior from newer Flashback releases
-- Optional Distant Horizons 3.2.0-b integration
+- Optional Distant Horizons, Immersive Vehicles, and Simple Voice Chat compatibility
 - English and Japanese localization
 
 ## Requirements
@@ -28,6 +28,8 @@ Copyright 2024 Moulberry. Do not reupload or redistribute without permission fro
 - Minecraft Forge 47.4.10 or newer in the 1.20.1 series
 - Java 17
 - Distant Horizons 3.2.0-b or newer is optional
+- Immersive Vehicles 24.x is optional
+- Simple Voice Chat 2.6.x is optional
 
 This build is client-side only. Do not install it on a dedicated server.
 
@@ -35,7 +37,7 @@ This build is client-side only. Do not install it on a dedicated server.
 
 1. Install Minecraft Forge for Minecraft 1.20.1.
 2. Build the project locally with Java 17.
-3. Copy `build/libs/flashback-1.0.0.jar` into the profile's `mods` folder.
+3. Copy `build/libs/flashback-1.0.1.jar` into the profile's `mods` folder.
 4. Remove older Flashback JARs from that folder, then start the game.
 
 ## Building
@@ -57,7 +59,7 @@ JAVA_HOME=/path/to/jdk-17 ./gradlew clean build --no-daemon
 The distributable artifact is generated at:
 
 ```text
-build/libs/flashback-1.0.0.jar
+build/libs/flashback-1.0.1.jar
 ```
 
 The `-slim.jar` artifact does not contain the bundled runtime libraries and should not be installed by end users.
@@ -68,7 +70,7 @@ Repository release instructions are documented in [RELEASING.md](RELEASING.md).
 
 - Flashback was created by [Moulberry](https://github.com/Moulberry/Flashback).
 - This repository contains an unofficial Minecraft Forge 1.20.1 port.
-- Distant Horizons compatibility uses its public API and remains optional.
+- Distant Horizons, Immersive Vehicles, and Simple Voice Chat compatibility remains optional.
 
 ## Support
 

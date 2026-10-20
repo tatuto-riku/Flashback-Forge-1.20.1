@@ -9,6 +9,7 @@ import com.moulberry.flashback.Flashback;
 import com.moulberry.flashback.PacketHelper;
 import com.moulberry.flashback.RegistryMetaHelper;
 import com.moulberry.flashback.action.*;
+import com.moulberry.flashback.compat.ImmersiveVehiclesReplayCompat;
 import com.moulberry.flashback.io.AsyncReplaySaver;
 import com.moulberry.flashback.io.ReplayWriter;
 import com.moulberry.flashback.packet.FlashbackAccurateEntityPosition;
@@ -1036,6 +1037,10 @@ public class Recorder {
                 gamePackets.add(new ClientboundSetEntityLinkPacket(entity, leashable.getLeashHolder()));
             }
         }
+
+        // IV's vanilla wrapper entities contain almost no state. Store the same full-state
+        // handshake that its server normally sends so vehicles survive snapshot seeks.
+        ImmersiveVehiclesReplayCompat.appendSnapshotPackets(level, gamePackets);
 
         // Map data
         for (Map.Entry<String, MapItemSavedData> entry : level.mapData.entrySet()) {

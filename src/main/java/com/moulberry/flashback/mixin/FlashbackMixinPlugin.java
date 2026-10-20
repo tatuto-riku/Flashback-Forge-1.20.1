@@ -1,6 +1,7 @@
 package com.moulberry.flashback.mixin;
 
 import com.llamalad7.mixinextras.MixinExtrasBootstrap;
+import net.minecraftforge.fml.loading.LoadingModList;
 import org.objectweb.asm.tree.ClassNode;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfigPlugin;
 import org.spongepowered.asm.mixin.extensibility.IMixinInfo;
@@ -22,6 +23,9 @@ public class FlashbackMixinPlugin implements IMixinConfigPlugin {
 
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
+        if (mixinClassName.startsWith("com.moulberry.flashback.mixin.compat.voice_chat.")) {
+            return LoadingModList.get().getModFileById("voicechat") != null;
+        }
         return true;
     }
 

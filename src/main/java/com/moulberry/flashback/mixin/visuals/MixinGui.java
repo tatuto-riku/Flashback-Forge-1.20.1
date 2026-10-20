@@ -1,6 +1,7 @@
 package com.moulberry.flashback.mixin.visuals;
 
 import com.llamalad7.mixinextras.injector.v2.WrapWithCondition;
+import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.moulberry.flashback.Flashback;
@@ -12,13 +13,14 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.Options;
 import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.components.ChatComponent;
 import net.minecraft.client.multiplayer.MultiPlayerGameMode;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.scores.Objective;
 import org.jetbrains.annotations.Nullable;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -56,36 +58,40 @@ public abstract class MixinGui {
         }
     }
 
-    @WrapWithCondition(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/components/ChatComponent;render(Lnet/minecraft/client/gui/GuiGraphics;III)V"), require = 0)
-    public boolean render_chat(ChatComponent chat, GuiGraphics guiGraphics, int tickCount, int o, int q) {
+    // In 1.20.1 the action bar and title are rendered inline from Gui#render.
+    // Replacing their first null-check expression suppresses the complete block,
+    // including its backdrop and pose-stack changes, instead of hiding only text.
+    @ModifyExpressionValue(
+            method = "render",
+            at = @At(value = "FIELD", target = "Lnet/minecraft/client/gui/Gui;overlayMessageString:Lnet/minecraft/network/chat/Component;"),
+            require = 0)
+    private Component flashback$hideActionBar(Component original) {
         EditorState editorState = EditorStateManager.getCurrent();
-        return editorState == null || editorState.replayVisuals.showChat;
+        if (Flashback.isInReplay() && editorState != null && !editorState.replayVisuals.showActionBar) {
+            return null;
+        }
+        return original;
     }
 
-    // TODO astavie: disable rendering of componets
-//    @Inject(method = "renderTitle", at = @At("HEAD"), cancellable = true, require = 0)
-//    public void renderTitle(GuiGraphics guiGraphics, DeltaTracker deltaTracker, CallbackInfo ci) {
-//        EditorState editorState = EditorStateManager.getCurrent();
-//        if (editorState != null && !editorState.replayVisuals.showTitleText) {
-//            ci.cancel();
-//        }
-//    }
+    @ModifyExpressionValue(
+            method = "render",
+            at = @At(value = "FIELD", target = "Lnet/minecraft/client/gui/Gui;title:Lnet/minecraft/network/chat/Component;"),
+            require = 0)
+    private Component flashback$hideTitle(Component original) {
+        EditorState editorState = EditorStateManager.getCurrent();
+        if (Flashback.isInReplay() && editorState != null && !editorState.replayVisuals.showTitleText) {
+            return null;
+        }
+        return original;
+    }
 
-//    @Inject(method = "renderScoreboardSidebar", at = @At("HEAD"), cancellable = true, require = 0)
-//    public void renderScoreboardSidebar(GuiGraphics guiGraphics, DeltaTracker deltaTracker, CallbackInfo ci) {
-//        EditorState editorState = EditorStateManager.getCurrent();
-//        if (editorState != null && !editorState.replayVisuals.showScoreboard) {
-//            ci.cancel();
-//        }
-//    }
-
-//    @Inject(method = "renderOverlayMessage", at = @At("HEAD"), cancellable = true, require = 0)
-//    public void renderOverlayMessage(GuiGraphics guiGraphics, DeltaTracker deltaTracker, CallbackInfo ci) {
-//        EditorState editorState = EditorStateManager.getCurrent();
-//        if (editorState != null && !editorState.replayVisuals.showActionBar) {
-//            ci.cancel();
-//        }
-//    }
+    @Inject(method = "displayScoreboardSidebar", at = @At("HEAD"), cancellable = true, require = 0)
+    private void flashback$hideScoreboard(GuiGraphics guiGraphics, Objective objective, CallbackInfo ci) {
+        EditorState editorState = EditorStateManager.getCurrent();
+        if (Flashback.isInReplay() && editorState != null && !editorState.replayVisuals.showScoreboard) {
+            ci.cancel();
+        }
+    }
 
     @WrapWithCondition(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/Gui;renderHotbar(FLnet/minecraft/client/gui/GuiGraphics;)V"), require = 0)
     public boolean render_hotbar1(Gui instance, float f, GuiGraphics guiGraphics) {

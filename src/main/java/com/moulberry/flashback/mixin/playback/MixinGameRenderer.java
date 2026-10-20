@@ -9,6 +9,8 @@ import com.moulberry.flashback.state.EditorStateManager;
 import com.moulberry.flashback.editor.ui.ReplayUI;
 import com.moulberry.flashback.ext.ItemInHandRendererExt;
 import com.moulberry.flashback.ext.MinecraftExt;
+import com.moulberry.flashback.playback.ReplayServer;
+import com.moulberry.flashback.playback.ReplayClientTick;
 import com.moulberry.flashback.visuals.AccurateEntityPositionHandler;
 import com.moulberry.flashback.visuals.CameraRotation;
 import net.minecraft.client.Camera;
@@ -31,6 +33,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.ModifyVariable;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
@@ -58,7 +61,8 @@ public abstract class MixinGameRenderer {
 
     @Inject(method = "tick", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/LevelRenderer;tickRain(Lnet/minecraft/client/Camera;)V"), cancellable = true)
     public void tick(CallbackInfo ci) {
-        if (Flashback.isInReplay() && !((MinecraftExt) minecraft).flashback$getReplayTimer().manager.runsNormally()) {
+        ReplayServer replayServer = Flashback.getReplayServer();
+        if (replayServer != null && !ReplayClientTick.runsNormally(minecraft)) {
             ci.cancel();
         }
     }
@@ -71,7 +75,45 @@ public abstract class MixinGameRenderer {
             Flashback.RECORDER.trackPartialPosition(player, partialTick);
         }
 
-        AccurateEntityPositionHandler.apply(Minecraft.getInstance().level, partialTick);
+        ReplayServer replayServer = Flashback.getReplayServer();
+        float replayPartialTick = replayServer != null && replayServer.replayPaused
+            ? 1.0f : partialTick;
+
+        if (replayServer != null && replayServer.replayPaused
+                && Minecraft.getInstance().level != null) {
+            // Consume movement packets queued immediately before pausing or during a seek. A
+            // LivingEntity otherwise approaches its network target over several later client
+            // ticks even though the replay timeline itself is already stopped.
+            for (Entity entity : Minecraft.getInstance().level.entitiesForRendering()) {
+                if (entity instanceof LivingEntity livingEntity
+                        && !(entity instanceof LocalPlayer) && !entity.isRemoved()) {
+                    if (livingEntity.lerpSteps > 0) {
+                        entity.moveTo(livingEntity.lerpX, livingEntity.lerpY,
+                            livingEntity.lerpZ, (float) livingEntity.lerpYRot,
+                            (float) livingEntity.lerpXRot);
+                    }
+                    livingEntity.lerpSteps = 0;
+                    livingEntity.lerpHeadSteps = 0;
+                    livingEntity.yHeadRotO = livingEntity.yHeadRot;
+                    livingEntity.yBodyRotO = livingEntity.yBodyRot;
+                    entity.setOldPosAndRot();
+                }
+            }
+        }
+        AccurateEntityPositionHandler.apply(Minecraft.getInstance().level, replayPartialTick);
+    }
+
+    @ModifyVariable(method = "renderLevel", at = @At("HEAD"), argsOnly = true, ordinal = 0)
+    private float flashback$freezeWorldPartialTick(float partialTick) {
+        ReplayServer replayServer = Flashback.getReplayServer();
+        // The client render loop continues while the replay timeline is paused. Pinning the world
+        // partial tick prevents positions, rotations, limb animation and entity shadows from
+        // slowly interpolating between the previous and current replay ticks. Camera interpolation
+        // is replaced separately below, so the editor's free camera remains smooth.
+        if (replayServer != null && replayServer.replayPaused && !Flashback.isExporting()) {
+            return 1.0f;
+        }
+        return partialTick;
     }
 
     @Inject(method = "render", at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderSystem;clear(IZ)V", remap = false, ordinal = 0), cancellable = true)

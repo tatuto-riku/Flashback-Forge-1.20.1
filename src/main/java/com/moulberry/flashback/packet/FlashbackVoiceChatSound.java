@@ -1,20 +1,17 @@
 package com.moulberry.flashback.packet;
 
-import com.moulberry.flashback.Flashback;
 import io.netty.handler.codec.DecoderException;
-import net.fabricmc.fabric.api.networking.v1.FabricPacket;
-import net.fabricmc.fabric.api.networking.v1.PacketType;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.UUID;
 
-public interface FlashbackVoiceChatSound extends FabricPacket {
+public interface FlashbackVoiceChatSound extends FlashbackPacket {
     byte TYPE_STATIC_SOUND = 0;
     byte TYPE_LOCATIONAL_SOUND = 1;
     byte TYPE_ENTITY_SOUND = 2;
 
-    PacketType<FlashbackVoiceChatSound> TYPE = PacketType.create(Flashback.createResourceLocation("voice_chat_sound"), friendlyByteBuf -> {
+    static FlashbackVoiceChatSound decode(FriendlyByteBuf friendlyByteBuf) {
         UUID uuid = friendlyByteBuf.readUUID();
 
         int sampleCount = friendlyByteBuf.readVarInt();
@@ -44,16 +41,11 @@ public interface FlashbackVoiceChatSound extends FabricPacket {
             }
             default -> throw new DecoderException("Unknown voice chat type: " + type);
         }
-    });
+    }
 
     UUID source();
     short[] samples();
     void writeExtraData(FriendlyByteBuf friendlyByteBuf);
-
-    @Override
-    default PacketType<?> getType() {
-        return TYPE;
-    }
 
     @Override
     default void write(FriendlyByteBuf friendlyByteBuf) {

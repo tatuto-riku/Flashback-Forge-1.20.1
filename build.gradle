@@ -17,6 +17,12 @@ plugins {
 
 apply plugin: 'org.spongepowered.mixin'
 
+// MixinExtras must be a negotiated Forge Jar-in-Jar dependency. Shading its
+// classes directly into Flashback creates a split Java module package when
+// another mod also provides MixinExtras (a common occurrence in modpacks).
+jarJar.enable()
+jarJar.disableDefaultSources()
+
 version = project.mod_version
 group = project.maven_group
 
@@ -60,6 +66,7 @@ repositories {
     maven { url = 'https://maven.minecraftforge.net/' }
     maven { url = 'https://jitpack.io/' }
     maven { url = 'https://repo.spongepowered.org/repository/maven-public/' }
+    maven { url = 'https://maven.maxhenkel.de/repository/public' }
     maven {
         url = 'https://api.modrinth.com/maven'
         content { includeGroup 'maven.modrinth' }
@@ -76,11 +83,17 @@ sourceSets.main.java {
     // Core recording, replay playback and exporting do not require these integrations.
     exclude 'com/moulberry/flashback/FlashbackModMenuApiImpl.java'
     exclude 'com/moulberry/flashback/exporting/FrexFlawlessFramesIntegration.java'
-    exclude 'com/moulberry/flashback/compat/simple_voice_chat/**'
     exclude 'com/moulberry/flashback/compat/valkyrienskies/**'
-    exclude 'com/moulberry/flashback/mixin/compat/**'
+    // Keep the Forge-native optional compat mixins in this package, while excluding
+    // the loader-specific integrations inherited from the Fabric source tree.
+    exclude 'com/moulberry/flashback/mixin/compat/axiom/**'
+    exclude 'com/moulberry/flashback/mixin/compat/bobby/**'
+    exclude 'com/moulberry/flashback/mixin/compat/fabric/**'
+    exclude 'com/moulberry/flashback/mixin/compat/iris/**'
+    exclude 'com/moulberry/flashback/mixin/compat/replaymod/**'
+    exclude 'com/moulberry/flashback/mixin/compat/valkyrienskies/**'
+    exclude 'com/moulberry/flashback/mixin/compat/MixinSodiumWorldRenderer.java'
     exclude 'com/moulberry/flashback/mixin/playback/MixinServerTickEvents.java'
-    exclude 'com/moulberry/flashback/packet/FlashbackVoiceChatSound.java'
 }
 
 def devRuntimeJar = tasks.register('devRuntimeJar', com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar) {
@@ -102,10 +115,16 @@ dependencies {
 
     annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
     annotationProcessor 'io.github.llamalad7:mixinextras-common:0.3.6'
+    compileOnly 'io.github.llamalad7:mixinextras-common:0.3.6'
     runtimeOnly fg.deobf('io.github.llamalad7:mixinextras-forge:0.3.6')
-    shade 'io.github.llamalad7:mixinextras-common:0.3.6'
+    jarJar('io.github.llamalad7:mixinextras-forge:0.3.6') {
+        jarJar.ranged(it, '[0.3.6,0.6)')
+    }
     minecraftLibrary files(devRuntimeJar.map { it.archiveFile })
     compileOnly 'maven.modrinth:distanthorizons:3.2.0-b-1.20.1'
+    // Compile against the complete mod because the upstream compatibility layer also
+    // hooks a few client implementation classes. The dependency remains optional at runtime.
+    compileOnly fg.deobf('maven.modrinth:simple-voice-chat:forge-1.20.1-2.6.22')
 
     shade(implementation('org.bytedeco:javacv-platform:1.5.10') {
         exclude group: 'org.bytedeco', module: 'artoolkitplus'
@@ -185,17 +204,27 @@ tasks.named('jar', Jar).configure {
 }
 
 tasks.named('shadowJar', com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar).configure {
-    archiveClassifier = ''
+    archiveClassifier = 'shaded'
     configurations = [project.configurations.shade]
     exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA'
     exclude 'fabric.mod.json'
     exclude 'flashback.accesswidener'
     exclude 'META-INF/versions/**/module-info.class'
     exclude 'module-info.class'
-    exclude 'com/llamalad7/mixinextras/ap/**'
+    exclude 'com/llamalad7/mixinextras/**'
     exclude 'META-INF/services/javax.annotation.processing.Processor'
     manifest.inheritFrom(tasks.jar.manifest)
     from(sourceSets.main.output)
+}
+
+// Use the already reobfuscated, dependency-shaded Flashback jar as the base,
+// then let Forge add MixinExtras under META-INF/jarjar with version metadata.
+tasks.named('jarJar', net.minecraftforge.gradle.userdev.tasks.JarJar).configure {
+    dependsOn 'reobfShadowJar'
+    archiveClassifier = ''
+    from({ zipTree(tasks.named('shadowJar').get().archiveFile.get().asFile) })
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest.inheritFrom(tasks.named('shadowJar').get().manifest)
 }
 
 reobf {
@@ -203,7 +232,7 @@ reobf {
 }
 
 tasks.named('build').configure {
-    dependsOn tasks.named('reobfShadowJar')
+    dependsOn tasks.named('jarJar')
 }
 
 tasks.matching { it.name == 'prepareRunClient' }.configureEach {
@@ -221,7 +250,7 @@ afterEvaluate {
 publishing {
     publications {
         register('mavenJava', MavenPublication) {
-            artifact tasks.shadowJar
+            artifact tasks.jarJar
         }
     }
 }

@@ -2,6 +2,7 @@ package com.moulberry.flashback;
 
 import com.moulberry.flashback.packet.FinishedServerTick;
 import com.moulberry.flashback.packet.FlashbackAccurateEntityPosition;
+import com.moulberry.flashback.packet.FlashbackClearEntities;
 import com.moulberry.flashback.packet.FlashbackClearParticles;
 import com.moulberry.flashback.packet.FlashbackForceClientTick;
 import com.moulberry.flashback.packet.FlashbackInstantlyLerp;
@@ -10,8 +11,13 @@ import com.moulberry.flashback.packet.FlashbackRemoteExperience;
 import com.moulberry.flashback.packet.FlashbackRemoteFoodData;
 import com.moulberry.flashback.packet.FlashbackRemoteSelectHotbarSlot;
 import com.moulberry.flashback.packet.FlashbackRemoteSetSlot;
+import com.moulberry.flashback.packet.FlashbackRecheckBlocks;
+import com.moulberry.flashback.packet.FlashbackVoiceChatSound;
+import com.moulberry.flashback.compat.simple_voice_chat.SimpleVoiceChatPlayback;
 import com.moulberry.flashback.ext.MinecraftExt;
+import com.moulberry.flashback.ext.ClientLevelExt;
 import com.moulberry.flashback.playback.ReplayTimer;
+import com.moulberry.flashback.playback.ReplayClientTick;
 import com.moulberry.flashback.visuals.AccurateEntityPositionHandler;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
@@ -61,15 +67,64 @@ public final class FlashbackNetwork {
                 context.get().setPacketHandled(true);
             }).add();
 
+        CHANNEL.messageBuilder(FlashbackClearEntities.class, nextId++, NetworkDirection.PLAY_TO_CLIENT)
+            .encoder(FlashbackClearEntities::write)
+            .decoder(FlashbackClearEntities::decode)
+            .consumerMainThread((packet, context) -> {
+                Minecraft minecraft = Minecraft.getInstance();
+                if (Flashback.isInReplay() && minecraft.level != null) {
+                    ((ClientLevelExt) minecraft.level).flashback$clearQueuedLightUpdates();
+                    // Snapshot replay replaces all non-player entities. The vanilla tracker can
+                    // leave entities such as dropped items alive on the physical client until a
+                    // later tracking pass, so remove them before the snapshot spawns arrive.
+                    java.util.List<Entity> entities = new java.util.ArrayList<>();
+                    minecraft.level.getEntities().getAll().forEach(entities::add);
+                    for (Entity entity : entities) {
+                        if (!(entity instanceof net.minecraft.world.entity.player.Player)) {
+                            entity.discard();
+                        }
+                    }
+                }
+                context.get().setPacketHandled(true);
+            }).add();
+
+        CHANNEL.messageBuilder(FlashbackRecheckBlocks.class, nextId++, NetworkDirection.PLAY_TO_CLIENT)
+            .encoder(FlashbackRecheckBlocks::write)
+            .decoder(FlashbackRecheckBlocks::decode)
+            .consumerMainThread((packet, context) -> {
+                Minecraft minecraft = Minecraft.getInstance();
+                if (Flashback.isInReplay() && minecraft.level != null) {
+                    ((ClientLevelExt) minecraft.level)
+                            .flashback$queueLightRechecks(packet.positions());
+                }
+                context.get().setPacketHandled(true);
+            }).add();
+
         CHANNEL.messageBuilder(FlashbackInstantlyLerp.class, nextId++, NetworkDirection.PLAY_TO_CLIENT)
             .encoder(FlashbackInstantlyLerp::write)
             .decoder(FlashbackInstantlyLerp::decode)
             .consumerMainThread((packet, context) -> {
                 Minecraft minecraft = Minecraft.getInstance();
                 if (Flashback.isInReplay() && minecraft.level != null) {
+                    // Full chunk/light packets queue their renderer invalidation in ClientLevel.
+                    // Drain only after every packet for this snapshot has arrived, so paused
+                    // replays cannot render halfway through the queue and a later seek cannot
+                    // apply stale light over the new block state.
+                    ((ClientLevelExt) minecraft.level).flashback$drainQueuedLightUpdates();
+                    ((ClientLevelExt) minecraft.level).flashback$applyQueuedLightRechecks();
                     for (Entity entity : minecraft.level.entitiesForRendering()) {
-                        if (entity instanceof LivingEntity && !entity.isRemoved() && !(entity instanceof LocalPlayer)) {
-                            entity.moveTo(entity.getX(), entity.getY(), entity.getZ(), entity.getYRot(), entity.getXRot());
+                        if (entity instanceof LivingEntity livingEntity
+                                && !entity.isRemoved() && !(entity instanceof LocalPlayer)) {
+                            // 1.20.1 stores the network interpolation target on LivingEntity.
+                            // Snap to that target and consume the interpolation instead of merely
+                            // resetting the previous render position while the entity keeps sliding.
+                            if (livingEntity.lerpSteps > 0) {
+                                entity.moveTo(livingEntity.lerpX, livingEntity.lerpY,
+                                        livingEntity.lerpZ, (float) livingEntity.lerpYRot,
+                                        (float) livingEntity.lerpXRot);
+                            }
+                            livingEntity.lerpSteps = 0;
+                            livingEntity.lerpHeadSteps = 0;
                         }
                         entity.setOldPosAndRot();
                     }
@@ -124,6 +179,18 @@ public final class FlashbackNetwork {
                 context.get().setPacketHandled(true);
             }).add();
 
+        // The payload itself has no hard dependency on Simple Voice Chat, so keeping its
+        // discriminator stable is safe even when the optional mod is absent.
+        CHANNEL.messageBuilder(FlashbackVoiceChatSound.class, nextId++, NetworkDirection.PLAY_TO_CLIENT)
+            .encoder(FlashbackVoiceChatSound::write)
+            .decoder(FlashbackVoiceChatSound::decode)
+            .consumerMainThread((packet, context) -> {
+                if (Flashback.isInReplay() && LoaderCompat.isModLoaded("voicechat")) {
+                    SimpleVoiceChatPlayback.play(packet);
+                }
+                context.get().setPacketHandled(true);
+            }).add();
+
         CHANNEL.messageBuilder(FlashbackAccurateEntityPosition.class, nextId++, NetworkDirection.PLAY_TO_CLIENT)
             .encoder(FlashbackAccurateEntityPosition::write)
             .decoder(FlashbackAccurateEntityPosition::decode)
@@ -165,7 +232,7 @@ public final class FlashbackNetwork {
         boolean wasFrozen = replayTimer.manager.isFrozen();
         replayTimer.manager.setFrozen(false);
         try {
-            minecraft.tick();
+            ReplayClientTick.runForced(minecraft::tick);
         } finally {
             replayTimer.manager.setFrozen(wasFrozen);
         }

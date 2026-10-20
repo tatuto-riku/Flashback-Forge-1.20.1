@@ -3,6 +3,7 @@ package com.moulberry.flashback.mixin.replay_server;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.moulberry.flashback.ext.ServerLevelExt;
+import com.moulberry.flashback.playback.EmptyLevelSource;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import net.minecraft.server.level.ServerChunkCache;
@@ -60,16 +61,23 @@ public abstract class MixinServerLevel implements ServerLevelExt {
         }
     }
 
-    // Fix for worldgen mods injecting on getGeneratorState to add custom worldgen properties
-    // Lets just nuke the whole line
+    @Unique
+    private boolean flashback$skipStructureGeneration;
 
     @WrapOperation(method = "<init>", at = @At(value = "INVOKE", target = "Lnet/minecraft/server/level/ServerChunkCache;getGeneratorState()Lnet/minecraft/world/level/chunk/ChunkGeneratorStructureState;"))
     public ChunkGeneratorStructureState getGeneratorState(ServerChunkCache instance, Operation<ChunkGeneratorStructureState> original) {
-        return null;
+        // A null return value breaks wrappers installed by world-generation and
+        // optimization mods such as ModernFix. Keep the real state available to
+        // those mods and only suppress structure generation for replay worlds.
+        this.flashback$skipStructureGeneration = instance.getGenerator() instanceof EmptyLevelSource;
+        return original.call(instance);
     }
 
     @WrapOperation(method = "<init>", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/chunk/ChunkGeneratorStructureState;ensureStructuresGenerated()V"))
     public void ensureStructuresGenerated(ChunkGeneratorStructureState instance, Operation<Void> original) {
+        if (!this.flashback$skipStructureGeneration) {
+            original.call(instance);
+        }
     }
 
 }

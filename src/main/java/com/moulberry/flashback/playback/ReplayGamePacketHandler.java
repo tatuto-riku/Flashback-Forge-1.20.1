@@ -8,14 +8,17 @@ import com.moulberry.flashback.PacketHelper;
 import com.moulberry.flashback.exception.UnsupportedPacketException;
 import com.moulberry.flashback.ext.LevelChunkExt;
 import com.moulberry.flashback.ext.ServerLevelExt;
-import com.moulberry.flashback.ext.ThreadedLevelLightEngineExt;
 import com.moulberry.flashback.packet.FlashbackRemoteExperience;
 import com.moulberry.flashback.packet.FlashbackRemoteFoodData;
 import com.moulberry.flashback.packet.FlashbackRemoteSelectHotbarSlot;
 import com.moulberry.flashback.packet.FlashbackRemoteSetSlot;
+import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongArrayList;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import it.unimi.dsi.fastutil.longs.LongSet;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.PlayerInfo;
 import net.minecraft.client.player.RemotePlayer;
@@ -33,10 +36,10 @@ import net.minecraft.network.protocol.game.*;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerChunkCache;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.server.level.ThreadedLevelLightEngine;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.tags.TagKey;
 import net.minecraft.tags.TagNetworkSerialization;
@@ -67,7 +70,6 @@ import net.minecraft.world.level.biome.Biomes;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.border.WorldBorder;
 import net.minecraft.world.level.chunk.ChunkAccess;
-import net.minecraft.world.level.chunk.ChunkStatus;
 import net.minecraft.world.level.chunk.DataLayer;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.dimension.DimensionType;
@@ -93,10 +95,14 @@ import java.util.UUID;
 
 public class ReplayGamePacketHandler implements ClientGamePacketListener {
 
+    static final ResourceLocation EXTRA_ENTITY_SPAWN_DATA = new ResourceLocation("porting_lib", "extra_entity_spawn_data");
+    private static final ResourceLocation IMMERSIVE_VEHICLES_CHANNEL = new ResourceLocation("mts", "main");
+
     private final ReplayServer replayServer;
     private final Map<UUID, PlayerInfo> playerInfoMap = new HashMap<>();
     private Int2ObjectMap<Entity> pendingEntities = new Int2ObjectOpenHashMap<>();
     private ResourceKey<Level> currentDimension = null;
+    private final Map<ResourceKey<Level>, LongSet> changedBlockPositions = new HashMap<>();
     public int localPlayerId = -1;
 
     public ReplayGamePacketHandler(ReplayServer replayServer) {
@@ -107,6 +113,44 @@ public class ReplayGamePacketHandler implements ClientGamePacketListener {
         for (ServerPlayer replayViewer : this.replayServer.getReplayViewers()) {
             replayViewer.connection.send(packet);
         }
+    }
+
+    private void forwardCustomPayload(ClientboundCustomPayloadPacket packet) {
+        // Replay viewers use Netty's local channel, which passes the Packet object itself
+        // to the client instead of serializing it. A send-completion callback therefore
+        // fires before the client handles the object and is too early to release its data.
+        // Reconstruct through the decoding constructor instead: Forge marks that packet as
+        // owning its payload and releases it after ClientPacketListener has handled it.
+        FriendlyByteBuf payload = packet.getData();
+        byte[] data = new byte[payload.readableBytes()];
+        try {
+            payload.getBytes(payload.readerIndex(), data);
+        } finally {
+            payload.release();
+        }
+
+        if (this.replayServer.isSnapshotViewerPacketDeliveryPending()
+                && packet.getIdentifier().equals(IMMERSIVE_VEHICLES_CHANNEL)) {
+            // Keep the snapshot handshake and every subsequent catch-up packet in one ordered
+            // backlog. IV drops part/rider packets if its internal vehicle has not been restored.
+            this.replayServer.rememberSnapshotCustomPayload(packet.getIdentifier(), data);
+            return;
+        }
+
+        for (ServerPlayer replayViewer : this.replayServer.getReplayViewers()) {
+            sendCustomPayload(replayViewer, packet.getIdentifier(), data);
+        }
+    }
+
+    public void sendCustomPayload(ServerPlayer replayViewer, ResourceLocation id, byte[] data) {
+            FriendlyByteBuf encodedPacket = new FriendlyByteBuf(Unpooled.buffer());
+            try {
+                encodedPacket.writeResourceLocation(id);
+                encodedPacket.writeBytes(data);
+                replayViewer.connection.send(new ClientboundCustomPayloadPacket(encodedPacket));
+            } finally {
+                encodedPacket.release();
+            }
     }
 
     private void forward(Entity entity, Packet<?> packet) {
@@ -121,6 +165,32 @@ public class ReplayGamePacketHandler implements ClientGamePacketListener {
     private void setBlockState(ServerLevel level, BlockPos blockPos, BlockState blockState) {
         LevelChunk levelChunk = level.getChunkAt(blockPos);
         ((LevelChunkExt)levelChunk).flashback$setBlockStateWithoutUpdates(blockPos, blockState);
+    }
+
+    private void rememberChangedBlock(BlockPos blockPos) {
+        if (this.currentDimension != null) {
+            this.changedBlockPositions
+                    .computeIfAbsent(this.currentDimension, ignored -> new LongOpenHashSet())
+                    .add(blockPos.asLong());
+        }
+    }
+
+    public long[] getChangedBlockPositions(
+            ResourceKey<Level> dimension, LongSet trackedChunks) {
+        LongSet positions = this.changedBlockPositions.get(dimension);
+        if (positions == null || positions.isEmpty()) {
+            return new long[0];
+        }
+
+        LongArrayList trackedPositions = new LongArrayList();
+        for (long packedPosition : positions) {
+            BlockPos position = BlockPos.of(packedPosition);
+            if (trackedChunks.contains(ChunkPos.asLong(
+                    position.getX() >> 4, position.getZ() >> 4))) {
+                trackedPositions.add(packedPosition);
+            }
+        }
+        return trackedPositions.toLongArray();
     }
 
     public void flushPendingEntities() {
@@ -342,6 +412,9 @@ public class ReplayGamePacketHandler implements ClientGamePacketListener {
 
     @Override
     public void handleBlockDestruction(ClientboundBlockDestructionPacket clientboundBlockDestructionPacket) {
+        if (this.replayServer.suppressTransientEffects) {
+            return;
+        }
         forward(clientboundBlockDestructionPacket);
     }
 
@@ -372,6 +445,9 @@ public class ReplayGamePacketHandler implements ClientGamePacketListener {
 
     @Override
     public void handleBlockEvent(ClientboundBlockEventPacket clientboundBlockEventPacket) {
+        if (this.replayServer.suppressTransientEffects) {
+            return;
+        }
         BlockPos pos = clientboundBlockEventPacket.getPos();
         this.replayServer.getPlayerList().broadcast(null, pos.getX(), pos.getY(), pos.getZ(),
             64.0, this.level().dimension(), clientboundBlockEventPacket);
@@ -379,6 +455,7 @@ public class ReplayGamePacketHandler implements ClientGamePacketListener {
 
     @Override
     public void handleBlockUpdate(ClientboundBlockUpdatePacket clientboundBlockUpdatePacket) {
+        this.rememberChangedBlock(clientboundBlockUpdatePacket.getPos());
         this.setBlockState(this.level(), clientboundBlockUpdatePacket.getPos(),
             clientboundBlockUpdatePacket.getBlockState());
         forward(clientboundBlockUpdatePacket);
@@ -408,6 +485,7 @@ public class ReplayGamePacketHandler implements ClientGamePacketListener {
     public void handleChunkBlocksUpdate(ClientboundSectionBlocksUpdatePacket clientboundSectionBlocksUpdatePacket) {
         ServerLevel level = this.level();
         clientboundSectionBlocksUpdatePacket.runUpdates((blockPos, blockState) -> {
+            this.rememberChangedBlock(blockPos);
             this.setBlockState(level, blockPos, blockState);
         });
         forward(clientboundSectionBlocksUpdatePacket);
@@ -496,14 +574,52 @@ public class ReplayGamePacketHandler implements ClientGamePacketListener {
         if (vehicle == null) {
             return;
         }
-        vehicle.ejectPassengers();
-        for (int passengerId : clientboundSetPassengersPacket.getPassengers()) {
+
+        int[] requestedPassengerIds = clientboundSetPassengersPacket.getPassengers();
+        List<Entity> currentPassengers = List.copyOf(vehicle.getPassengers());
+        boolean relationshipChanged = currentPassengers.size() != requestedPassengerIds.length;
+        if (!relationshipChanged) {
+            for (int index = 0; index < requestedPassengerIds.length; index++) {
+                if (currentPassengers.get(index).getId() != requestedPassengerIds[index]) {
+                    relationshipChanged = true;
+                    break;
+                }
+            }
+        }
+
+        if (!relationshipChanged) {
+            // Vanilla handles a passenger packet by ejecting everyone and adding them again, even
+            // when the relationship is identical. IV interprets that transient eject as a real
+            // dismount and removes its linked seat a few ticks later. Do not forward no-op packets.
+            return;
+        }
+
+        Set<Integer> requestedPassengers = new java.util.HashSet<>();
+        for (int passengerId : requestedPassengerIds) {
+            requestedPassengers.add(passengerId);
+        }
+        for (Entity currentPassenger : currentPassengers) {
+            if (!requestedPassengers.contains(currentPassenger.getId())) {
+                currentPassenger.stopRiding();
+            }
+        }
+        for (int passengerId : requestedPassengerIds) {
             Entity passenger = this.level().getEntity(passengerId);
             if (passenger == null) {
                 continue;
             }
+            if (passenger.getVehicle() != vehicle) {
+                passenger.startRiding(vehicle, true);
+            }
+        }
 
-            passenger.startRiding(vehicle, true);
+        // Entity tracking may not publish a changed riding relationship until a later server tick.
+        // Forward the recorded relationship in-order; during snapshot catch-up it shares the same
+        // barrier as IV's rider packets so neither side observes a half-mounted state.
+        if (this.replayServer.isSnapshotViewerPacketDeliveryPending()) {
+            this.replayServer.deferSnapshotViewerPacket(clientboundSetPassengersPacket);
+        } else {
+            forward(clientboundSetPassengersPacket);
         }
     }
 
@@ -568,7 +684,8 @@ public class ReplayGamePacketHandler implements ClientGamePacketListener {
         ChunkPos chunkPos = chunk.getPos();
         ((ServerLevelExt)this.level()).flashback$markChunkAsSendable(chunkPos.toLong());
         for (ReplayPlayer serverPlayer : this.replayServer.getReplayViewers()) {
-            if (serverPlayer.trackingChunks.contains(chunkPos.toLong())) {
+            if (!this.replayServer.isProcessingSnapshot
+                    && serverPlayer.trackingChunks.contains(chunkPos.toLong())) {
                 serverPlayer.pendingChunks.add(chunkPos.toLong());
             }
         }
@@ -590,26 +707,12 @@ public class ReplayGamePacketHandler implements ClientGamePacketListener {
         Iterator<byte[]> iterator2 = clientboundLightUpdatePacketData.getBlockUpdates().iterator();
         this.readSectionList(x, z, levelLightEngine, LightLayer.BLOCK, blockYMask, emptyBlockYMask, iterator2);
 
-        ((ThreadedLevelLightEngineExt)levelLightEngine).flashback$submitPost(x, z, () -> {
-            // Initialize light
-            LevelChunk chunkAccess = this.level().getChunk(x, z);
-            // todo: do we need to do this if replaceWithPacketData already does it?
-            chunkAccess.initializeLightSources();
-            boolean isLightCorrect = chunkAccess.getStatus().isOrAfter(ChunkStatus.LIGHT) && chunkAccess.isLightCorrect();
-            ((ThreadedLevelLightEngine)levelLightEngine).initializeLight(chunkAccess, isLightCorrect).thenRun(() -> {
-                // Send light data
-                LevelChunk chunkAccess2 = this.level().getChunk(x, z);
-                chunkAccess2.setLightCorrect(true);
-
-                ChunkPos chunkPos = new ChunkPos(x, z);
-                var lightPacket = new ClientboundLightUpdatePacket(chunkPos, levelLightEngine, null, null);
-                for (ReplayPlayer serverPlayer : this.replayServer.getReplayViewers()) {
-                    if (serverPlayer.trackingChunks.contains(chunkPos.toLong())) {
-                        serverPlayer.connection.send(lightPacket);
-                    }
-                }
-            });
-        });
+        // The recording already contains the authoritative sky/block light arrays. In 1.20.1,
+        // initializeLightSources() reads section palettes from the light worker while a following
+        // rewind can replace those palettes on the replay thread. That race corrupts the palette
+        // read and stops later light updates. Keep the server copy marked valid, while the exact
+        // recorded packet below performs the client-side light and renderer notification.
+        this.level().getChunk(x, z).setLightCorrect(true);
     }
 
     private void readSectionList(int x, int z, LevelLightEngine levelLightEngine, LightLayer lightLayer, BitSet yMask, BitSet emptyYMask, Iterator<byte[]> iterator) {
@@ -641,6 +744,9 @@ public class ReplayGamePacketHandler implements ClientGamePacketListener {
 
     @Override
     public void handleLevelEvent(ClientboundLevelEventPacket clientboundLevelEventPacket) {
+        if (this.replayServer.suppressTransientEffects) {
+            return;
+        }
         if (clientboundLevelEventPacket.isGlobalEvent()) {
             this.replayServer.getPlayerList().broadcastAll(clientboundLevelEventPacket);
         } else {
@@ -860,6 +966,9 @@ public class ReplayGamePacketHandler implements ClientGamePacketListener {
 
     @Override
     public void handleParticleEvent(ClientboundLevelParticlesPacket clientboundLevelParticlesPacket) {
+        if (this.replayServer.suppressTransientEffects) {
+            return;
+        }
         for (ServerPlayer viewer : this.replayServer.getReplayViewers()) {
             viewer.connection.send(clientboundLevelParticlesPacket);
         }
@@ -1117,12 +1226,18 @@ public class ReplayGamePacketHandler implements ClientGamePacketListener {
 
     @Override
     public void handleSoundEvent(ClientboundSoundPacket clientboundSoundPacket) {
+        if (this.replayServer.suppressTransientEffects) {
+            return;
+        }
         ResourceKey<Level> dimension = this.level().dimension();
         this.replayServer.getPlayerList().broadcastAll(clientboundSoundPacket, dimension);
     }
 
     @Override
     public void handleSoundEntityEvent(ClientboundSoundEntityPacket clientboundSoundEntityPacket) {
+        if (this.replayServer.suppressTransientEffects) {
+            return;
+        }
         Entity entity = this.level().getEntity(clientboundSoundEntityPacket.getId());
         if (entity == null) {
             return;
@@ -1333,6 +1448,9 @@ public class ReplayGamePacketHandler implements ClientGamePacketListener {
 
     @Override
     public void handleStopSoundEvent(ClientboundStopSoundPacket clientboundStopSoundPacket) {
+        if (this.replayServer.suppressTransientEffects) {
+            return;
+        }
         forward(clientboundStopSoundPacket);
     }
 
@@ -1374,6 +1492,9 @@ public class ReplayGamePacketHandler implements ClientGamePacketListener {
         this.applyLightData(levelLightEngine, x, z, lightData);
 
         chunk.setUnsaved(true);
+        // Preserve recording order and data exactly. Reconstructing this packet from the replay
+        // server's threaded light engine is nondeterministic during rapid consecutive rewinds.
+        forward(clientboundLightUpdatePacket);
     }
 
     @Override
@@ -1476,7 +1597,11 @@ public class ReplayGamePacketHandler implements ClientGamePacketListener {
 
     @Override
     public void handleCustomPayload(ClientboundCustomPayloadPacket clientboundCustomPayloadPacket) {
-        forward(clientboundCustomPayloadPacket);
+        if (clientboundCustomPayloadPacket.getIdentifier().equals(EXTRA_ENTITY_SPAWN_DATA)) {
+            handleExtraDataPacket(clientboundCustomPayloadPacket);
+        } else {
+            forwardCustomPayload(clientboundCustomPayloadPacket);
+        }
     }
 
     @Override
@@ -1520,13 +1645,17 @@ public class ReplayGamePacketHandler implements ClientGamePacketListener {
 
     public void handleExtraDataPacket(ClientboundCustomPayloadPacket cp) {
         FriendlyByteBuf buf = cp.getData();
-        int entityId = buf.readVarInt();
-        Entity entity = this.getEntityOrPending(entityId);
+        try {
+            int entityId = buf.readVarInt();
+            Entity entity = this.getEntityOrPending(entityId);
 
-        if (entity instanceof IEntityAdditionalSpawnData extra) {
-            extra.readSpawnData(buf);
-        } else {
-            Flashback.LOGGER.error("Extra spawn data received, but no corresponding Forge entity was found: [{}]", entity);
+            if (entity instanceof IEntityAdditionalSpawnData extra) {
+                extra.readSpawnData(buf);
+            } else {
+                Flashback.LOGGER.error("Extra spawn data received, but no corresponding Forge entity was found: [{}]", entity);
+            }
+        } finally {
+            buf.release();
         }
     }
 }

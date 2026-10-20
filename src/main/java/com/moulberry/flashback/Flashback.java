@@ -10,6 +10,7 @@ import com.mojang.serialization.Lifecycle;
 import com.moulberry.flashback.action.*;
 import com.moulberry.flashback.command.BetterColorArgument;
 import com.moulberry.flashback.compat.DistantHorizonsSupport;
+import com.moulberry.flashback.compat.simple_voice_chat.SimpleVoiceChatPlayback;
 import com.moulberry.flashback.configuration.FlashbackConfig;
 import com.moulberry.flashback.exporting.AsyncFileDialogs;
 import com.moulberry.flashback.exporting.ExportJob;
@@ -476,6 +477,9 @@ public class Flashback {
 
     @SubscribeEvent
     public void onClientLogin(ClientPlayerNetworkEvent.LoggingIn event) {
+        if (LoaderCompat.isModLoaded("voicechat")) {
+            SimpleVoiceChatPlayback.cleanUp();
+        }
         if (!Flashback.isInReplay() && Flashback.getConfig().automaticallyStart && RECORDER == null) {
             delayedStartRecording = 20;
         }
@@ -871,6 +875,7 @@ public class Flashback {
             GameRules gameRules = new GameRules();
             gameRules.getRule(GameRules.RULE_DOMOBSPAWNING).set(false, null);
             gameRules.getRule(GameRules.RULE_DOENTITYDROPS).set(false, null);
+            gameRules.getRule(GameRules.RULE_DOBLOCKDROPS).set(false, null);
             gameRules.getRule(GameRules.RULE_ANNOUNCE_ADVANCEMENTS).set(false, null);
             gameRules.getRule(GameRules.RULE_DISABLE_RAIDS).set(true, null);
             gameRules.getRule(GameRules.RULE_DO_PATROL_SPAWNING).set(false, null);

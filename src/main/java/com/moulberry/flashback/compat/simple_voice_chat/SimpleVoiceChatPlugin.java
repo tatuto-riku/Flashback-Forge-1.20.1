@@ -1,7 +1,7 @@
 package com.moulberry.flashback.compat.simple_voice_chat;
 
-import com.moulberry.flashback.action.ActionLevelChunkCached;
 import com.moulberry.flashback.action.ActionRegistry;
+import de.maxhenkel.voicechat.api.ForgeVoicechatPlugin;
 import de.maxhenkel.voicechat.api.VoicechatApi;
 import de.maxhenkel.voicechat.api.VoicechatClientApi;
 import de.maxhenkel.voicechat.api.VoicechatPlugin;
@@ -10,6 +10,7 @@ import de.maxhenkel.voicechat.api.events.ClientSoundEvent;
 import de.maxhenkel.voicechat.api.events.EventRegistration;
 import de.maxhenkel.voicechat.plugins.impl.VoicechatClientApiImpl;
 
+@ForgeVoicechatPlugin
 public class SimpleVoiceChatPlugin implements VoicechatPlugin {
 
     public static VoicechatClientApi CLIENT_API = VoicechatClientApiImpl.instance();

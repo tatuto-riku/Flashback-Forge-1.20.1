@@ -15,9 +15,9 @@ $env:JAVA_HOME = "C:\Path\To\jdk-17"
 $env:Path = "$env:JAVA_HOME\bin;$env:Path"
 .\gradlew.bat clean build --no-daemon
 
-$jar = "build\libs\flashback-1.0.0.jar"
+$jar = "build\libs\flashback-1.0.1.jar"
 $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $jar).Hash.ToLowerInvariant()
-"$hash  flashback-1.0.0.jar" | Set-Content -Encoding ascii "$jar.sha256"
+"$hash  flashback-1.0.1.jar" | Set-Content -Encoding ascii "$jar.sha256"
 ```
 
 ## Commit the port
@@ -28,7 +28,7 @@ Review `git status` and `git diff` before staging. The port includes tracked del
 git status --short
 git diff --check
 git add -A
-git commit -m "Port Flashback to Forge 1.20.1"
+git commit -m "Release Flashback Forge 1.20.1 v1.0.1"
 ```
 
 ## Create the GitHub repository
@@ -44,16 +44,16 @@ git push -u origin master
 ## Create the release
 
 ```powershell
-git tag -a v1.0.0 -m "Flashback Forge 1.20.1 v1.0.0"
-git push origin v1.0.0
+git tag -a v1.0.1 -m "Flashback Forge 1.20.1 v1.0.1"
+git push origin v1.0.1
 
-gh release create v1.0.0 `
-  build/libs/flashback-1.0.0.jar `
-  build/libs/flashback-1.0.0.jar.sha256 `
+gh release create v1.0.1 `
+  build/libs/flashback-1.0.1.jar `
+  build/libs/flashback-1.0.1.jar.sha256 `
   --repo tatuto-riku/Flashback-Forge-1.20.1 `
-  --title "Flashback Forge 1.20.1 - 1.0.0" `
+  --title "Flashback Forge 1.20.1 - 1.0.1" `
   --notes-file CHANGELOG.md `
   --verify-tag
 ```
 
-The `build/libs/flashback-1.0.0-slim.jar` file is not a distributable mod and must not be attached to the release.
+The `build/libs/flashback-1.0.1-slim.jar` file is not a distributable mod and must not be attached to the release.

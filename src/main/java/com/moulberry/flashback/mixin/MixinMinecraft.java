@@ -9,6 +9,7 @@ import com.mojang.authlib.yggdrasil.YggdrasilAuthenticationService;
 import com.mojang.blaze3d.platform.Window;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.moulberry.flashback.Flashback;
+import com.moulberry.flashback.LoaderCompat;
 import com.moulberry.flashback.exporting.ExportJob;
 import com.moulberry.flashback.exporting.ExportJobQueue;
 import com.moulberry.flashback.keyframe.handler.MinecraftKeyframeHandler;
@@ -18,12 +19,16 @@ import com.moulberry.flashback.state.EditorState;
 import com.moulberry.flashback.state.EditorStateManager;
 import com.moulberry.flashback.exporting.PerfectFrames;
 import com.moulberry.flashback.playback.ReplayServer;
+import com.moulberry.flashback.screen.ScreenInputTracker;
+import com.moulberry.flashback.playback.ReplayClientTick;
+import com.moulberry.flashback.compat.ImmersiveVehiclesRiderCompat;
 import com.moulberry.flashback.ext.MinecraftExt;
 import com.moulberry.flashback.editor.ui.ReplayUI;
+import com.moulberry.flashback.compat.simple_voice_chat.SimpleVoiceChatPlayback;
 import com.moulberry.flashback.visuals.AccurateEntityPositionHandler;
 import it.unimi.dsi.fastutil.floats.FloatUnaryOperator;
 import net.minecraft.client.renderer.GameRenderer;
-import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.client.renderer.texture.TextureManager;
 import net.minecraft.CrashReport;
 import net.minecraft.ReportedException;
 import net.minecraft.Util;
@@ -165,7 +170,9 @@ public abstract class MixinMinecraft implements MinecraftExt {
 
     @Inject(method="setScreen", at=@At("HEAD"), cancellable = true)
     public void setScreen(Screen screen, CallbackInfo ci) {
-        if (Flashback.isInReplay() && screen != null && !screen.getClass().getName().startsWith("net.minecraft") && !screen.getClass().getName().startsWith("com.moulberry.flashback")) {
+        // Block mod screens opened by replayed packets/events, but allow screens the user opened by
+        // interacting with another screen (e.g. Embeddium's replacement for the Video Settings screen)
+        if (Flashback.isInReplay() && screen != null && !ScreenInputTracker.isHandlingUserInput() && !screen.getClass().getName().startsWith("net.minecraft") && !screen.getClass().getName().startsWith("com.moulberry.flashback")) {
             screen.added();
             screen.init((Minecraft) (Object) this, window.getGuiScaledWidth(), window.getGuiScaledHeight());
             screen.removed();
@@ -233,6 +240,9 @@ public abstract class MixinMinecraft implements MinecraftExt {
                 Minecraft.getInstance().options.hideGui = false;
             } else {
                 EditorStateManager.reset();
+                if (LoaderCompat.isModLoaded("voicechat")) {
+                    SimpleVoiceChatPlayback.cleanUp();
+                }
             }
         }
     }
@@ -243,6 +253,11 @@ public abstract class MixinMinecraft implements MinecraftExt {
     @Unique
     private final ReplayTimer replayTimer = new ReplayTimer(0, new TickRateManager(false));
 
+    @Unique
+    private boolean flashback$replayRunsNormally() {
+        return ReplayClientTick.runsNormally((Minecraft) (Object) this);
+    }
+
     @Override
     public ReplayTimer flashback$getReplayTimer() {
         return replayTimer;
@@ -250,6 +265,16 @@ public abstract class MixinMinecraft implements MinecraftExt {
 
     @Inject(method = "clearLevel(Lnet/minecraft/client/gui/screens/Screen;)V", at = @At("HEAD"))
     public void disconnectHead(Screen screen, CallbackInfo ci) {
+        // Vanilla normally relies on ServerGamePacketListenerImpl noticing that the
+        // singleplayer owner disconnected to halt the integrated server. Forge's login
+        // negotiation may rebuild the replay viewer profile without our marker property,
+        // which makes that owner check fail and leaves clearLevel waiting forever for the
+        // replay server to stop. We already know this is our private replay server here,
+        // so request its normal, orderly shutdown directly before vanilla starts waiting.
+        if (this.singleplayerServer instanceof ReplayServer replayServer) {
+            replayServer.halt(false);
+        }
+
         try {
             if (Flashback.getConfig().automaticallyFinish && Flashback.RECORDER != null /* && !isTransferring */ ) {
                 Flashback.finishRecordingReplay();
@@ -288,7 +313,7 @@ public abstract class MixinMinecraft implements MinecraftExt {
         if (Flashback.isInReplay()) {
             i.set(replayTimer.advanceTime(Util.getMillis()));
             timer.tickDelta = replayTimer.tickDelta;
-            if (!replayTimer.manager.runsNormally()) {
+            if (!this.flashback$replayRunsNormally()) {
                 timer.partialTick = 1.0F;
             } else {
                 timer.partialTick = replayTimer.partialTick;
@@ -317,8 +342,13 @@ public abstract class MixinMinecraft implements MinecraftExt {
     @Inject(method = "tick", at = @At("HEAD"))
     public void tick_tickRateManager(CallbackInfo ci) {
         if (Flashback.isInReplay() && !pause) {
+            ReplayServer replayServer = Flashback.getReplayServer();
+            if (replayServer != null && replayServer.replayPaused && !Flashback.isExporting()
+                    && !ReplayClientTick.isForcing()) {
+                TickRateManager.setFrozen(true);
+            }
             replayTimer.manager.tick();
-            if (!replayTimer.manager.runsNormally()) {
+            if (!this.flashback$replayRunsNormally()) {
                 timer.partialTick = 1.0F;
             } else {
                 timer.partialTick = replayTimer.partialTick;
@@ -326,9 +356,38 @@ public abstract class MixinMinecraft implements MinecraftExt {
         }
     }
 
-    @WrapWithCondition(method = "tick", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/LevelRenderer;tick()V"))
-    public boolean tick_levelRenderer(LevelRenderer instance) {
-        return !Flashback.isInReplay() || replayTimer.manager.runsNormally();
+    @Inject(method = "tick", at = @At("RETURN"))
+    private void flashback$reconcileReplayPassengers(CallbackInfo ci) {
+        if (!Flashback.isInReplay() || this.level == null
+                || !ReplayClientTick.runsNormally((Minecraft) (Object) this)) {
+            return;
+        }
+
+        // Forge mods may move their vehicle or seat proxy from a ClientTickEvent after vanilla's
+        // recursive passenger tick has already positioned the rider.  Re-run the vehicle's own
+        // positioning operation at the final client-tick boundary so this works for arbitrary
+        // vehicle implementations and custom seat offsets, without simulating the passenger twice.
+        for (Entity passenger : this.level.entitiesForRendering()) {
+            Entity vehicle = passenger.getVehicle();
+            if (vehicle != null && !vehicle.isRemoved() && vehicle.hasPassenger(passenger)) {
+                ImmersiveVehiclesRiderCompat.reconcile(vehicle, passenger);
+                vehicle.positionRider(passenger);
+            }
+        }
+    }
+
+    @WrapWithCondition(method = "tick", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/texture/TextureManager;tick()V"))
+    public boolean tick_textureManager(TextureManager instance) {
+        // Backport Minecraft 1.21's isLevelRunningNormally guard. This freezes every tickable
+        // texture through the vanilla abstraction, including water, lava and modded atlases.
+        return this.flashback$replayRunsNormally();
+    }
+
+    @WrapWithCondition(method = "tick", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/particle/ParticleEngine;tick()V"))
+    public boolean tick_particleEngine(ParticleEngine instance) {
+        // Minecraft's own pause flag is independent from the replay timeline. Without this
+        // guard particles keep ageing and moving while a replay is paused.
+        return this.flashback$replayRunsNormally();
     }
 
     @Override
@@ -418,7 +477,10 @@ public abstract class MixinMinecraft implements MinecraftExt {
         SocketAddress socketAddress = this.singleplayerServer.getConnection().startMemoryChannel();
         Connection connection = Connection.connectToLocalServer(socketAddress);
         connection.setListener(new ClientHandshakePacketListenerImpl(connection,  (Minecraft) (Object) this, null, null, false, duration, component -> {}));
-        connection.send(new ClientIntentionPacket(socketAddress.toString(), 0, ConnectionProtocol.PLAY));
+        // 1.20.1 still enters the login protocol before switching to play. Using PLAY here
+        // leaves the two ends of the local channel with inconsistent packet directions and
+        // can make a later server disconnect packet arrive back at the server listener.
+        connection.send(new ClientIntentionPacket(socketAddress.toString(), 0, ConnectionProtocol.LOGIN));
         connection.send(new ServerboundHelloPacket(this.getUser().getName(), Optional.ofNullable(this.getUser().getProfileId())));
         this.pendingConnection = connection;
     }

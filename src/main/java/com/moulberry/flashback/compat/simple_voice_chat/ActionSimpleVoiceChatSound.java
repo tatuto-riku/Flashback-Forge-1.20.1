@@ -1,11 +1,11 @@
 package com.moulberry.flashback.compat.simple_voice_chat;
 
 import com.moulberry.flashback.Flashback;
+import com.moulberry.flashback.ServerPlayNetworking;
 import com.moulberry.flashback.action.Action;
 import com.moulberry.flashback.packet.FlashbackVoiceChatSound;
 import com.moulberry.flashback.playback.ReplayPlayer;
 import com.moulberry.flashback.playback.ReplayServer;
-import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceLocation;
 
@@ -22,7 +22,7 @@ public class ActionSimpleVoiceChatSound implements Action {
 
     @Override
     public void handle(ReplayServer replayServer, FriendlyByteBuf friendlyByteBuf) {
-        var soundPacket = FlashbackVoiceChatSound.TYPE.read(friendlyByteBuf);
+        var soundPacket = FlashbackVoiceChatSound.decode(friendlyByteBuf);
 
         if (replayServer.isProcessingSnapshot) {
             return;

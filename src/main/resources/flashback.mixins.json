@@ -8,6 +8,7 @@
   "client": [
     "MixinAbstractClientPlayer",
     "MixinDebugScreenOverlay",
+    "MixinKeyboardHandler",
     "MixinLevelRenderer",
     "MixinMinecraft",
     "MixinMouseHandler",
@@ -38,6 +39,7 @@
     "visuals.MixinClientLevel",
     "visuals.MixinClientLevelData",
     "visuals.MixinCapeRenderer",
+    "visuals.MixinChatComponent",
     "visuals.MixinElytraLayer",
     "visuals.MixinEntityGlowing",
     "visuals.MixinEntityRenderDispatcher",
@@ -54,7 +56,18 @@
     "visuals.MixinOptions",
     "visuals.MixinPlayerRenderer",
     "visuals.MixinParticleEngine",
-    "visuals.MixinRenderStateShard"
+    "visuals.MixinRenderStateShard",
+    "compat.MixinImmersiveVehiclesBuilderReplay",
+    "compat.MixinImmersiveVehiclesHandshakeReplay",
+    "compat.MixinImmersiveVehiclesRenderForwarderReplay",
+    "compat.MixinImmersiveVehiclesClientWarning",
+    "compat.MixinImmersiveVehiclesEngineReplay",
+    "compat.voice_chat.MixinVoiceChatALSpeakerBase",
+    "compat.voice_chat.MixinVoiceChatClientPlayerStateManager",
+    "compat.voice_chat.MixinVoiceChatClientVoicechat",
+    "compat.voice_chat.MixinVoiceChatRenderEvents",
+    "compat.voice_chat.MixinVoiceChatSoundManager",
+    "compat.MixinOculusSystemTimeTimer"
   ],
   "injectors": {
     "defaultRequire": 1
@@ -80,8 +93,10 @@
     "replay_server.MixinPlayerList",
     "replay_server.MixinServerChunkCache",
     "replay_server.MixinServerEntity",
+    "replay_server.MixinServerGamePacketListenerImpl",
     "replay_server.MixinServerLevel",
     "replay_server.MixinServerLoginPacketListenerImpl",
-    "visuals.MixinLevel"
+    "visuals.MixinLevel",
+    "compat.MixinImmersiveVehiclesWorldReplay"
   ]
 }
